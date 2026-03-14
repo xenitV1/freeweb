@@ -1,3 +1,32 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Logs
 logs/
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test
+coverage/
+
+# Misc
+*.tgz
+.npm

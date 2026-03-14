@@ -1,13 +1,20 @@
 {
-  "name": "freeweb",
+  "name": "@mehmet/freeweb-mcp",
   "version": "1.0.0",
-  "description": "Playwright-based web search MCP server with parallel tab support",
+  "description": "Secure MCP server for web browsing with Playwright - GitHub search, page browsing, content extraction",
+  "keywords": ["mcp", "playwright", "github", "web-browsing", "ai-tools", "model-context-protocol"],
+  "author": "",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "freeweb-mcp": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "prepare": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
@@ -16,5 +23,16 @@
   "devDependencies": {
     "@types/node": "^22.13.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xenitV1/freeweb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xenitV1/freeweb/issues"
+  },
+  "homepage": "https://github.com/xenitV1/freeweb#readme"
 }
