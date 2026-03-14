@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "websearch": {
-      "command": "node",
-      "args": ["C:/dev/websearhc/dist/index.js"]
-    }
-  }
-}
