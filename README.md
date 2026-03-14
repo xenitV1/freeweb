@@ -1,6 +1,15 @@
 # FreeWeb MCP Server
 
-A secure, Playwright-based MCP (Model Context Protocol) server for web browsing and GitHub search. Provides tools for AI assistants to browse pages, search GitHub, and extract web content.
+**Give your LLM unlimited web access - no API keys, no rate limits, no restrictions.**
+
+A secure, Playwright-based MCP (Model Context Protocol) server for web browsing and GitHub search. Provides tools for AI assistants to browse pages, search GitHub, and extract web content - completely free and unrestricted.
+
+## Why FreeWeb?
+
+- 🚀 **No API Keys Required** - Uses real browser automation, not paid APIs
+- ♾️ **No Rate Limits** - Browse as much as you need, no quotas or throttling
+- 🌐 **True Web Access** - Your LLM can visit any website, extract content, follow links
+- 🔓 **100% Free & Open Source** - No subscriptions, no hidden costs, no vendor lock-in
 
 ## Features
 
@@ -9,6 +18,7 @@ A secure, Playwright-based MCP (Model Context Protocol) server for web browsing 
 - ⚡ **SPA Support**: Auto-detection and handling of React/Vue/Next.js apps
 - 🔄 **Parallel Processing**: Browse multiple URLs concurrently
 - 🐙 **GitHub Integration**: Search repos, list files, view READMEs
+- 🛡️ **Anti-Bot Measures**: Stealth browser techniques for reliable access
 
 ## Quick Start
 

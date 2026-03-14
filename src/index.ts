@@ -9,7 +9,7 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// ── GÜVENLİK ──────────────────────────────────────────────────────
+// ── SECURITY ──────────────────────────────────────────────────────
 const BLOCKED_DOMAINS = [
   "malware", "phishing", "spam", "scam", "hack", "crack", "warez", "pirate",
   "porn", "xxx", "adult", "sex", ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz",
@@ -21,23 +21,23 @@ function isUrlSafe(url: string): { safe: boolean; reason?: string } {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      return { safe: false, reason: `Güvenli olmayan protokol: ${parsed.protocol}` };
+      return { safe: false, reason: `Unsafe protocol: ${parsed.protocol}` };
     }
     const hostname = parsed.hostname.toLowerCase();
     for (const blocked of BLOCKED_DOMAINS) {
       if (hostname.includes(blocked)) {
-        return { safe: false, reason: `Engellenen domain` };
+        return { safe: false, reason: `Blocked domain` };
       }
     }
     if (parsed.port && !["80", "443", "8080", "3000", "5000"].includes(parsed.port)) {
-      return { safe: false, reason: `Şüpheli port` };
+      return { safe: false, reason: `Suspicious port` };
     }
     if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-      return { safe: false, reason: "IP adresi güvenli değil" };
+      return { safe: false, reason: "IP address not allowed" };
     }
     return { safe: true };
   } catch {
-    return { safe: false, reason: "Geçersiz URL" };
+    return { safe: false, reason: "Invalid URL" };
   }
 }
 
@@ -48,7 +48,7 @@ function checkDownloadRequest(url: string): { allowed: boolean; warning?: string
                      pathname.includes("/releases/download/") ||
                      ALLOWED_DOWNLOAD_EXTENSIONS.some(ext => pathname.endsWith(ext));
   if (isDownload) {
-    return { allowed: false, warning: `⚠️ İndirme linki - kullanıcı izni gerekli` };
+    return { allowed: false, warning: `⚠️ Download link - user permission required` };
   }
   return { allowed: true };
 }
@@ -60,7 +60,7 @@ function checkDateFreshness(dateStr: string | undefined, maxAgeMonths = 24): { i
   const now = new Date();
   const ageMonths = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
   if (ageMonths > maxAgeMonths) {
-    return { isFresh: false, warning: `⚠️ ESKİ: ${ageMonths} ay önce (${date.toLocaleDateString("tr-TR")})` };
+    return { isFresh: false, warning: `⚠️ OLD: ${ageMonths} months ago (${date.toLocaleDateString("en-US")})` };
   }
   return { isFresh: true, warning: "" };
 }
@@ -68,9 +68,9 @@ function checkDateFreshness(dateStr: string | undefined, maxAgeMonths = 24): { i
 // ── TOOL: github_search ───────────────────────────────────────────
 server.tool(
   "github_search",
-  "GitHub'da repo arar.",
+  "Search GitHub repositories.",
   {
-    query: z.string().describe("Aranacak terim"),
+    query: z.string().describe("Search term"),
     type: z.enum(["repos", "code", "issues"]).optional().default("repos"),
     maxResults: z.number().min(1).max(10).optional().default(5),
     sortByUpdated: z.boolean().optional().default(true),
@@ -133,7 +133,7 @@ server.tool(
 
     const uniqueResults = results.filter((r, i, arr) => arr.findIndex((x) => x.url === r.url) === i);
     if (uniqueResults.length === 0) {
-      return { content: [{ type: "text" as const, text: `GitHub'da "${query}" için sonuç bulunamadı.` }] };
+      return { content: [{ type: "text" as const, text: `No results found on GitHub for "${query}".` }] };
     }
 
     const formatted = uniqueResults.slice(0, maxResults).map((r, i) => {
@@ -142,7 +142,7 @@ server.tool(
       if (r.stars) line += ` ⭐ ${r.stars}`;
       if (r.updatedAt) {
         const dateCheck = checkDateFreshness(r.updatedAt, 12);
-        line += `\n    📅 ${new Date(r.updatedAt).toLocaleDateString("tr-TR")}${dateCheck.warning ? " " + dateCheck.warning : ""}`;
+        line += `\n    📅 ${new Date(r.updatedAt).toLocaleDateString("en-US")}${dateCheck.warning ? " " + dateCheck.warning : ""}`;
       }
       line += `\n    URL: ${r.url}`;
       if (r.snippet) line += `\n    ${r.snippet.slice(0, 100)}`;
@@ -156,7 +156,7 @@ server.tool(
 // ── TOOL: browse_page ─────────────────────────────────────────────
 server.tool(
   "browse_page",
-  "URL ziyaret et.",
+  "Visit a URL and extract content.",
   {
     url: z.string().url().describe("URL"),
     waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("networkidle"),
@@ -165,7 +165,7 @@ server.tool(
   async ({ url, waitFor, warnIfOlderThanMonths }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
+      return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
     }
 
     const download = checkDownloadRequest(url);
@@ -191,8 +191,8 @@ server.tool(
       if (dateCheck.warning) dateWarning = `\n\n${dateCheck.warning}`;
     }
 
-    const truncated = content.text.length > 15000 ? content.text.slice(0, 15000) + "\n\n[... kesildi]" : content.text;
-    const dateInfo = pageDate ? `\n📅 ${new Date(pageDate).toLocaleDateString("tr-TR")}` : "";
+    const truncated = content.text.length > 15000 ? content.text.slice(0, 15000) + "\n\n[... truncated]" : content.text;
+    const dateInfo = pageDate ? `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}` : "";
 
     return { content: [{ type: "text" as const, text: `# ${content.title}\n\nURL: ${finalUrl}${dateInfo}${dateWarning}\n\n${truncated}` }] };
   }
@@ -201,7 +201,7 @@ server.tool(
 // ── TOOL: smart_browse ────────────────────────────────────────────
 server.tool(
   "smart_browse",
-  "Akıllı sayfa ziyareti: SPA tespiti, tarih kontrolü.",
+  "Smart page visit: SPA detection, date check.",
   {
     url: z.string().url().describe("URL"),
     requireFreshContent: z.boolean().optional().default(true),
@@ -210,7 +210,7 @@ server.tool(
   async ({ url, requireFreshContent, maxAgeMonths }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
+      return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
     }
 
     const download = checkDownloadRequest(url);
@@ -248,17 +248,17 @@ server.tool(
       isFresh = dateCheck.isFresh;
       if (dateCheck.warning) {
         dateWarning = `\n\n${dateCheck.warning}`;
-        if (requireFreshContent && !isFresh) dateWarning += "\n\n⚠️ GÜNCEL İÇERİK GEREKLİ!";
+        if (requireFreshContent && !isFresh) dateWarning += "\n\n⚠️ FRESH CONTENT REQUIRED!";
       }
     }
 
     let output = `# ${content.title}\n\nURL: ${finalUrl}`;
     if (isSPA) output += ` (SPA)`;
-    if (pageDate) output += `\n📅 ${new Date(pageDate).toLocaleDateString("tr-TR")}`;
+    if (pageDate) output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
     output += `${dateWarning}\n\n---\n\n${content.text.slice(0, 12000)}`;
 
     if (links.length > 0) {
-      output += `\n\n---\n\n## Bağlantılar (${links.length})\n`;
+      output += `\n\n---\n\n## Links (${links.length})\n`;
       output += links.slice(0, 15).map((l) => `- [${l.text}](${l.href})`).join("\n");
     }
 
@@ -269,9 +269,9 @@ server.tool(
 // ── TOOL: deep_search ─────────────────────────────────────────────
 server.tool(
   "deep_search",
-  "Doğrudan kaynaklardan arama.",
+  "Search directly from sources.",
   {
-    query: z.string().describe("Aranacak terim"),
+    query: z.string().describe("Search term"),
     sources: z.array(z.enum(["github", "npm", "mdn", "devdocs"])).optional().default(["github", "npm", "mdn"]),
     maxAgeMonths: z.number().optional().default(12),
   },
@@ -324,24 +324,24 @@ server.tool(
     const formatted = sortedResults.map((r, i) => {
       let line = `[${i + 1}] **${r.title}** (${r.source})`;
       if (r.date) {
-        line += ` - 📅 ${new Date(r.date).toLocaleDateString("tr-TR")}`;
-        if (!r.isFresh) line += " ⚠️ ESKİ";
+        line += ` - 📅 ${new Date(r.date).toLocaleDateString("en-US")}`;
+        if (!r.isFresh) line += " ⚠️ OLD";
       }
       line += `\n    URL: ${r.url}\n    ${r.content.slice(0, 300)}...`;
       return line;
     }).join("\n\n");
 
-    return { content: [{ type: "text" as const, text: `# Deep Search: "${query}"\n${freshResults.length}/${results.length} kaynak güncel\n\n${formatted}` }] };
+    return { content: [{ type: "text" as const, text: `# Deep Search: "${query}"\n${freshResults.length}/${results.length} sources fresh\n\n${formatted}` }] };
   }
 );
 
 // ── TOOL: github_repo_files ───────────────────────────────────────
 server.tool(
   "github_repo_files",
-  "GitHub repo dosyalarını listeler.",
+  "List GitHub repository files.",
   {
-    owner: z.string().describe("Repo sahibi"),
-    repo: z.string().describe("Repo adı"),
+    owner: z.string().describe("Repository owner"),
+    repo: z.string().describe("Repository name"),
     path: z.string().optional().default(""),
     branch: z.string().optional().default("main"),
   },
@@ -368,15 +368,15 @@ server.tool(
     await browserManager.closeContext(ctxId);
 
     if (files.length === 0) {
-      return { content: [{ type: "text" as const, text: `Dosya bulunamadı: ${url}` }] };
+      return { content: [{ type: "text" as const, text: `No files found: ${url}` }] };
     }
 
     const dirs = files.filter((f) => f.type === "dir");
     const fileList = files.filter((f) => f.type === "file");
 
     let output = `# ${owner}/${repo}/${path || ""}\n\n`;
-    if (dirs.length > 0) output += `📁 Klasörler:\n${dirs.map((d) => `  ${d.name}/`).join("\n")}\n\n`;
-    if (fileList.length > 0) output += `📄 Dosyalar:\n${fileList.map((f) => `  ${f.name}`).join("\n")}`;
+    if (dirs.length > 0) output += `📁 Folders:\n${dirs.map((d) => `  ${d.name}/`).join("\n")}\n\n`;
+    if (fileList.length > 0) output += `📄 Files:\n${fileList.map((f) => `  ${f.name}`).join("\n")}`;
 
     return { content: [{ type: "text" as const, text: output }] };
   }
@@ -385,9 +385,9 @@ server.tool(
 // ── TOOL: parallel_browse ─────────────────────────────────────────
 server.tool(
   "parallel_browse",
-  "Birden çok URL'yi paralel ziyaret eder.",
+  "Visit multiple URLs in parallel.",
   {
-    urls: z.array(z.string().url()).min(1).max(5).describe("URL'ler (max 5)"),
+    urls: z.array(z.string().url()).min(1).max(5).describe("URLs (max 5)"),
   },
   async ({ urls }) => {
     const safeUrls: string[] = [];
@@ -404,7 +404,7 @@ server.tool(
     }
 
     if (safeUrls.length === 0) {
-      return { content: [{ type: "text" as const, text: `🔒 Tüm URL'ler engellendi.\n${blockedUrls.join("\n")}` }] };
+      return { content: [{ type: "text" as const, text: `🔒 All URLs blocked.\n${blockedUrls.join("\n")}` }] };
     }
 
     const ctxId = genContextId();
@@ -422,8 +422,8 @@ server.tool(
 
       let output = `## ${content.title}\nURL: ${url}`;
       if (pageDate) {
-        output += `\n📅 ${new Date(pageDate).toLocaleDateString("tr-TR")}`;
-        if (!dateCheck.isFresh) output += " ⚠️ ESKİ";
+        output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
+        if (!dateCheck.isFresh) output += " ⚠️ OLD";
       }
       output += `\n\n${content.text.slice(0, 4000)}`;
       return output;
@@ -434,7 +434,7 @@ server.tool(
 
     let output = allResults.join("\n\n---\n\n");
     if (blockedUrls.length > 0) {
-      output += `\n\n---\n\n🔒 Engellenen: ${blockedUrls.join(", ")}`;
+      output += `\n\n---\n\n🔒 Blocked: ${blockedUrls.join(", ")}`;
     }
 
     return { content: [{ type: "text" as const, text: output }] };
@@ -444,14 +444,14 @@ server.tool(
 // ── TOOL: get_page_links ──────────────────────────────────────────
 server.tool(
   "get_page_links",
-  "Sayfadaki linkleri çıkarır.",
+  "Extract links from a page.",
   {
     url: z.string().url().describe("URL"),
   },
   async ({ url }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
+      return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
     }
 
     const ctxId = genContextId();
@@ -466,14 +466,14 @@ server.tool(
     const safeLinks = links.filter(l => isUrlSafe(l.href).safe);
     const formatted = safeLinks.slice(0, 100).map((l, i) => `[${i + 1}] ${l.text}\n    ${l.href}`).join("\n");
 
-    return { content: [{ type: "text" as const, text: formatted || "Link bulunamadı." }] };
+    return { content: [{ type: "text" as const, text: formatted || "No links found." }] };
   }
 );
 
 // ── TOOL: screenshot ──────────────────────────────────────────────
 server.tool(
   "screenshot",
-  "Ekran görüntüsü alır.",
+  "Take a screenshot.",
   {
     url: z.string().url().describe("URL"),
     fullPage: z.boolean().optional().default(false),
@@ -481,7 +481,7 @@ server.tool(
   async ({ url, fullPage }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
+      return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
     }
 
     const ctxId = genContextId();

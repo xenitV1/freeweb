@@ -22,18 +22,18 @@ class BrowserManager {
     return this.browser;
   }
 
-  /** Stealth context aç - bot tespitini zorlaştır */
+  /** Create stealth context - make bot detection harder */
   async createContext(id: string): Promise<BrowserContext> {
     if (this.contexts.has(id)) return this.contexts.get(id)!;
     const browser = await this.launch();
 
-    // Rastgele viewport boyutları (gerçekçi aralıkta)
+    // Random viewport dimensions (realistic range)
     const widths = [1366, 1440, 1536, 1920, 2560];
     const heights = [768, 800, 900, 1080, 1440];
     const randomWidth = widths[Math.floor(Math.random() * widths.length)];
     const randomHeight = heights[Math.floor(Math.random() * heights.length)];
 
-    // Gerçekçi user-agent'lar
+    // Realistic user-agents
     const userAgents = [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -48,11 +48,11 @@ class BrowserManager {
       viewport: { width: randomWidth, height: randomHeight },
       locale: "en-US",
       timezoneId: "America/New_York",
-      // WebRTC leak engelle
+      // Prevent WebRTC leak
       permissions: ["geolocation"],
-      // Canvas fingerprint randomize
+      // Randomize canvas fingerprint
       colorScheme: Math.random() > 0.5 ? "light" : "dark",
-      // HTTP header'lar
+      // HTTP headers
       extraHTTPHeaders: {
         "Accept-Language": "en-US,en;q=0.9",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -69,12 +69,12 @@ class BrowserManager {
       },
     });
 
-    // Stealth script'leri inject et
+    // Inject stealth scripts
     await ctx.addInitScript(() => {
-      // WebDriver tespitini engelle
+      // Prevent WebDriver detection
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
 
-      // Plugins sahtele
+      // Spoof plugins
       Object.defineProperty(navigator, "plugins", {
         get: () => [
           { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
@@ -83,22 +83,22 @@ class BrowserManager {
         ],
       });
 
-      // Languages sahtele
+      // Spoof languages
       Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
 
-      // Platform sahtele
+      // Spoof platform
       Object.defineProperty(navigator, "platform", { get: () => "Win32" });
 
-      // Hardware concurrency sahtele
+      // Spoof hardware concurrency
       Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
 
-      // Device memory sahtele
+      // Spoof device memory
       Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
 
-      // Chrome object sahtele
+      // Spoof Chrome object
       (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
 
-      // Permission query sahtele
+      // Spoof permission query
       const originalQuery = window.navigator.permissions.query;
       window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
         if (parameters.name === "notifications") {
@@ -111,7 +111,7 @@ class BrowserManager {
       const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
       HTMLCanvasElement.prototype.toDataURL = function (type?: string) {
         if (type === "image/png" && this.width === 220 && this.height === 30) {
-          // Fingerprint canvas tespit - noise ekle
+          // Fingerprint canvas detection - add noise
           const ctx = this.getContext("2d");
           if (ctx) {
             const imageData = ctx.getImageData(0, 0, this.width, this.height);
@@ -129,14 +129,14 @@ class BrowserManager {
     return ctx;
   }
 
-  /** Context'te yeni sekme aç - rastgele gecikme ile */
+  /** Open new tab in context - with random delay */
   async openPage(contextId: string, url?: string): Promise<Page> {
     const ctx = await this.createContext(contextId);
     const page = await ctx.newPage();
 
-    // Sayfa yüklenmeden önce ek stealth
+    // Additional stealth before page load
     await page.addInitScript(() => {
-      // Screen resolution sahtele
+      // Spoof screen resolution
       Object.defineProperty(screen, "width", { get: () => 1920 });
       Object.defineProperty(screen, "height", { get: () => 1080 });
       Object.defineProperty(screen, "availWidth", { get: () => 1920 });
@@ -144,20 +144,20 @@ class BrowserManager {
     });
 
     if (url) {
-      // Rastgele gecikme (insan gibi)
+      // Random delay (human-like)
       await this.randomDelay(500, 1500);
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
     }
     return page;
   }
 
-  /** Rastgele gecikme */
+  /** Random delay */
   private randomDelay(min: number, max: number): Promise<void> {
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
     return new Promise((resolve) => setTimeout(resolve, delay));
   }
 
-  /** Context'teki tüm sekmeleri kapat */
+  /** Close all tabs in context */
   async closeContext(id: string): Promise<void> {
     const ctx = this.contexts.get(id);
     if (ctx) {
@@ -166,7 +166,7 @@ class BrowserManager {
     }
   }
 
-  /** Tüm browser'ı kapat */
+  /** Close entire browser */
   async close(): Promise<void> {
     for (const id of this.contexts.keys()) {
       await this.closeContext(id);

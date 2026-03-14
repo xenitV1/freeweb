@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 
-/** Sayfadaki ana metin içeriğini çıkar */
+/** Extract main text content from page */
 export async function extractContent(page: Page): Promise<{ title: string; text: string; html: string }> {
   const result = await page.evaluate(() => {
     function cleanText(raw: string): string {
@@ -130,7 +130,7 @@ export async function extractContent(page: Page): Promise<{ title: string; text:
   return result;
 }
 
-/** Sayfa tarihini çıkar - çoklu kaynak kontrolü */
+/** Extract page date - multiple source check */
 export async function extractDate(page: Page): Promise<string | undefined> {
   return page.evaluate(() => {
     // 1. Schema.org JSON-LD
@@ -180,10 +180,9 @@ export async function extractDate(page: Page): Promise<string | undefined> {
       /(\d{4}-\d{2}-\d{2})/, // 2024-01-15
       /(\d{1,2}\/\d{1,2}\/\d{4})/, // 01/15/2024
       /((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i,
-      /(\d{1,2}\s+(?:Ocak|Şubat|Mart|Nisan|Mayıs|Haziran|Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\s+\d{4})/i,
     ];
 
-    // Published/Updated/Güncelleme text'leri
+    // Published/Updated text patterns
     const dateTextSelectors = [
       ".published, .post-date, .article-date, .entry-date, .date",
       "[class*='publish'], [class*='updated'], [class*='modified']",
@@ -200,7 +199,7 @@ export async function extractDate(page: Page): Promise<string | undefined> {
       }
     }
 
-    // 7. Footer'da telif hakkı tarihi
+    // 7. Copyright date in footer
     const footer = document.querySelector("footer");
     if (footer && footer.textContent) {
       const yearMatch = footer.textContent.match(/(?:©|Copyright|Telif)\s*(\d{4})/i);
@@ -211,7 +210,7 @@ export async function extractDate(page: Page): Promise<string | undefined> {
   });
 }
 
-/** Sayfadaki linkleri çıkar */
+/** Extract links from page */
 export async function extractLinks(page: Page): Promise<{ text: string; href: string }[]> {
   return page.evaluate(() => {
     return Array.from(document.querySelectorAll("a[href]"))
@@ -227,7 +226,7 @@ export async function extractLinks(page: Page): Promise<{ text: string; href: st
   });
 }
 
-/** Arama sonuçlarını parse et */
+/** Parse search results */
 export async function parseSearchResults(page: Page): Promise<{ title: string; url: string; snippet: string }[]> {
   return page.evaluate(() => {
     // Google
@@ -274,7 +273,7 @@ export async function parseSearchResults(page: Page): Promise<{ title: string; u
   });
 }
 
-/** Context ID üret */
+/** Generate context ID */
 let counter = 0;
 export function genContextId(): string {
   return `ctx_${Date.now()}_${++counter}`;
