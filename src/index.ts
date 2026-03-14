@@ -3,26 +3,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { browserManager } from "./browser.js";
 import { extractContent, extractLinks, extractDate, genContextId } from "./utils.js";
-import { Logger, logSession } from "./logger.js";
 
 const server = new McpServer({
   name: "freeweb",
   version: "1.0.0",
 });
 
-// ── GÜVENLİK UYARILARI ────────────────────────────────────────────
-const SECURITY_WARNING = `
-🔒 GÜVENLİK KURALLARI:
-• Sadece HTTPS sitelerine gidilir
-• Şüpheli/malicious siteler ziyaret edilmez
-• Kullanıcı izni olmadan HİÇBİR dosya indirilmez
-• Form doldurulmaz, giriş yapılmaz, ödeme yapılmaz
-`;
-
+// ── GÜVENLİK ──────────────────────────────────────────────────────
 const BLOCKED_DOMAINS = [
   "malware", "phishing", "spam", "scam", "hack", "crack", "warez", "pirate",
-  "porn", "xxx", "adult", "sex",
-  ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz",
+  "porn", "xxx", "adult", "sex", ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz",
 ];
 
 const ALLOWED_DOWNLOAD_EXTENSIONS = [".pdf", ".json", ".txt", ".csv", ".xml", ".md", ".html"];
@@ -36,18 +26,18 @@ function isUrlSafe(url: string): { safe: boolean; reason?: string } {
     const hostname = parsed.hostname.toLowerCase();
     for (const blocked of BLOCKED_DOMAINS) {
       if (hostname.includes(blocked)) {
-        return { safe: false, reason: `Engellenen domain: ${blocked}` };
+        return { safe: false, reason: `Engellenen domain` };
       }
     }
     if (parsed.port && !["80", "443", "8080", "3000", "5000"].includes(parsed.port)) {
-      return { safe: false, reason: `Şüpheli port: ${parsed.port}` };
+      return { safe: false, reason: `Şüpheli port` };
     }
     if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-      return { safe: false, reason: "IP adresi kullanımı güvenli değil" };
+      return { safe: false, reason: "IP adresi güvenli değil" };
     }
     return { safe: true };
   } catch {
-    return { safe: false, reason: "Geçersiz URL formatı" };
+    return { safe: false, reason: "Geçersiz URL" };
   }
 }
 
@@ -58,40 +48,34 @@ function checkDownloadRequest(url: string): { allowed: boolean; warning?: string
                      pathname.includes("/releases/download/") ||
                      ALLOWED_DOWNLOAD_EXTENSIONS.some(ext => pathname.endsWith(ext));
   if (isDownload) {
-    return {
-      allowed: false,
-      warning: `⚠️ DİKKAT: Bu URL bir dosya indirme bağlantısı görünüyor.\n\nKullanıcı onayı olmadan dosya indirilemez.`,
-    };
+    return { allowed: false, warning: `⚠️ İndirme linki - kullanıcı izni gerekli` };
   }
   return { allowed: true };
 }
 
-function checkDateFreshness(dateStr: string | undefined, maxAgeMonths = 24): { isFresh: boolean; ageMonths: number; warning: string } {
-  if (!dateStr) return { isFresh: true, ageMonths: 0, warning: "" };
+function checkDateFreshness(dateStr: string | undefined, maxAgeMonths = 24): { isFresh: boolean; warning: string } {
+  if (!dateStr) return { isFresh: true, warning: "" };
   const date = new Date(dateStr);
-  if (isNaN(date.getTime())) return { isFresh: true, ageMonths: 0, warning: "" };
+  if (isNaN(date.getTime())) return { isFresh: true, warning: "" };
   const now = new Date();
   const ageMonths = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
   if (ageMonths > maxAgeMonths) {
-    return { isFresh: false, ageMonths, warning: `⚠️ ESKİ İÇERİK: ${ageMonths} ay önce (${date.toLocaleDateString("tr-TR")})` };
+    return { isFresh: false, warning: `⚠️ ESKİ: ${ageMonths} ay önce (${date.toLocaleDateString("tr-TR")})` };
   }
-  return { isFresh: true, ageMonths, warning: "" };
+  return { isFresh: true, warning: "" };
 }
 
 // ── TOOL: github_search ───────────────────────────────────────────
 server.tool(
   "github_search",
-  "GitHub'da repo arar. Son güncelleme tarihi gösterilir.",
+  "GitHub'da repo arar.",
   {
     query: z.string().describe("Aranacak terim"),
-    type: z.enum(["repos", "code", "issues"]).optional().default("repos").describe("Arama türü"),
-    maxResults: z.number().min(1).max(10).optional().default(5).describe("Maksimum sonuç"),
-    sortByUpdated: z.boolean().optional().default(true).describe("Son güncellemeye göre sırala"),
+    type: z.enum(["repos", "code", "issues"]).optional().default("repos"),
+    maxResults: z.number().min(1).max(10).optional().default(5),
+    sortByUpdated: z.boolean().optional().default(true),
   },
   async ({ query, type, maxResults, sortByUpdated }) => {
-    const log = new Logger("github_search");
-    log.info("Starting GitHub search", { query, type, maxResults, sortByUpdated });
-
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
@@ -102,31 +86,27 @@ server.tool(
     await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(4000);
 
-    // GitHub search results parsing
     const results = await page.evaluate(() => {
       const items: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
 
-      // Yeni React UI
       document.querySelectorAll('[data-testid="results-list"] > div').forEach((item) => {
         const titleEl = item.querySelector("a");
         const descEl = item.querySelector("p");
         const dateEl = item.querySelector("relative-time, time, [datetime]");
         const starsEl = item.querySelector('[data-testid="stars-count"], .starring-container span');
         const langEl = item.querySelector('[data-testid="language"], [itemprop="programmingLanguage"]');
-
         if (titleEl) {
           items.push({
             title: titleEl.textContent?.trim() || "",
             url: `https://github.com${titleEl.getAttribute("href") || ""}`,
             snippet: descEl?.textContent?.trim() || "",
-            updatedAt: dateEl?.getAttribute("datetime") || dateEl?.textContent?.trim() || "",
+            updatedAt: dateEl?.getAttribute("datetime") || "",
             stars: starsEl?.textContent?.trim() || "",
             language: langEl?.textContent?.trim() || "",
           });
         }
       });
 
-      // Eski UI fallback
       if (items.length === 0) {
         document.querySelectorAll(".repo-list-item").forEach((item) => {
           const titleEl = item.querySelector("a.v-align-middle");
@@ -134,7 +114,6 @@ server.tool(
           const dateEl = item.querySelector("relative-time");
           const starsEl = item.querySelector(".pl-2 span");
           const langEl = item.querySelector("[itemprop='programmingLanguage']");
-
           if (titleEl) {
             items.push({
               title: titleEl.textContent?.trim() || "",
@@ -147,66 +126,51 @@ server.tool(
           }
         });
       }
-
       return items;
     });
 
-    const uniqueResults = results.filter((r, i, arr) => arr.findIndex((x) => x.url === r.url) === i);
     await browserManager.closeContext(ctxId);
 
+    const uniqueResults = results.filter((r, i, arr) => arr.findIndex((x) => x.url === r.url) === i);
     if (uniqueResults.length === 0) {
-      const result = { content: [{ type: "text" as const, text: `GitHub'da "${query}" için sonuç bulunamadı.` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `GitHub'da "${query}" için sonuç bulunamadı.` }] };
     }
 
-    const formatted = uniqueResults
-      .slice(0, maxResults)
-      .map((r, i) => {
-        let line = `[${i + 1}] ${r.title}`;
-        if (r.language) line += ` (${r.language})`;
-        if (r.stars) line += ` ⭐ ${r.stars}`;
-        if (r.updatedAt) {
-          const dateCheck = checkDateFreshness(r.updatedAt, 12);
-          line += `\n    📅 ${new Date(r.updatedAt).toLocaleDateString("tr-TR")}${dateCheck.warning ? " " + dateCheck.warning : ""}`;
-        }
-        line += `\n    URL: ${r.url}`;
-        if (r.snippet) line += `\n    ${r.snippet.slice(0, 100)}`;
-        return line;
-      })
-      .join("\n\n");
+    const formatted = uniqueResults.slice(0, maxResults).map((r, i) => {
+      let line = `[${i + 1}] ${r.title}`;
+      if (r.language) line += ` (${r.language})`;
+      if (r.stars) line += ` ⭐ ${r.stars}`;
+      if (r.updatedAt) {
+        const dateCheck = checkDateFreshness(r.updatedAt, 12);
+        line += `\n    📅 ${new Date(r.updatedAt).toLocaleDateString("tr-TR")}${dateCheck.warning ? " " + dateCheck.warning : ""}`;
+      }
+      line += `\n    URL: ${r.url}`;
+      if (r.snippet) line += `\n    ${r.snippet.slice(0, 100)}`;
+      return line;
+    }).join("\n\n");
 
-    const result = { content: [{ type: "text" as const, text: formatted }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: formatted }] };
   }
 );
 
 // ── TOOL: browse_page ─────────────────────────────────────────────
 server.tool(
   "browse_page",
-  "URL ziyaret et. Güvenlik ve tarih kontrolü yapılır.",
+  "URL ziyaret et.",
   {
-    url: z.string().url().describe("Ziyaret edilecek URL"),
-    waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("networkidle").describe("Bekleme stratejisi"),
-    warnIfOlderThanMonths: z.number().optional().default(24).describe("Eski içerik uyarısı (ay)"),
+    url: z.string().url().describe("URL"),
+    waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("networkidle"),
+    warnIfOlderThanMonths: z.number().optional().default(24),
   },
   async ({ url, waitFor, warnIfOlderThanMonths }) => {
-    const log = new Logger("browse_page");
-    log.info("Browsing page", { url, waitFor, warnIfOlderThanMonths });
-
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      const result = { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}\n\n${SECURITY_WARNING}` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
     }
 
     const download = checkDownloadRequest(url);
     if (!download.allowed) {
-      const result = { content: [{ type: "text" as const, text: download.warning || "" }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: download.warning || "" }] };
     }
 
     const ctxId = genContextId();
@@ -215,13 +179,10 @@ server.tool(
     await page.goto(url, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 3)).catch(() => {});
-    await page.waitForTimeout(500);
-
     const content = await extractContent(page);
     const pageDate = await extractDate(page);
-
     const finalUrl = page.url();
+
     await browserManager.closeContext(ctxId);
 
     let dateWarning = "";
@@ -231,39 +192,30 @@ server.tool(
     }
 
     const truncated = content.text.length > 15000 ? content.text.slice(0, 15000) + "\n\n[... kesildi]" : content.text;
-    const dateInfo = pageDate ? `\n📅 Sayfa Tarihi: ${new Date(pageDate).toLocaleDateString("tr-TR")}` : "";
+    const dateInfo = pageDate ? `\n📅 ${new Date(pageDate).toLocaleDateString("tr-TR")}` : "";
 
-    const result = { content: [{ type: "text" as const, text: `# ${content.title}\n\nURL: ${finalUrl}${dateInfo}${dateWarning}\n\n${truncated}` }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: `# ${content.title}\n\nURL: ${finalUrl}${dateInfo}${dateWarning}\n\n${truncated}` }] };
   }
 );
 
 // ── TOOL: smart_browse ────────────────────────────────────────────
 server.tool(
   "smart_browse",
-  "Akıllı sayfa ziyareti: SPA tespiti, tarih kontrolü, içerik çıkarımı.",
+  "Akıllı sayfa ziyareti: SPA tespiti, tarih kontrolü.",
   {
-    url: z.string().url().describe("Ziyaret edilecek URL"),
-    requireFreshContent: z.boolean().optional().default(true).describe("Güncel içerik zorunlu mu"),
-    maxAgeMonths: z.number().optional().default(12).describe("Maksimum içerik yaşı (ay)"),
+    url: z.string().url().describe("URL"),
+    requireFreshContent: z.boolean().optional().default(true),
+    maxAgeMonths: z.number().optional().default(12),
   },
   async ({ url, requireFreshContent, maxAgeMonths }) => {
-    const log = new Logger("smart_browse");
-    log.info("Smart browsing", { url, requireFreshContent, maxAgeMonths });
-
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      const result = { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}\n\n${SECURITY_WARNING}` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
     }
 
     const download = checkDownloadRequest(url);
     if (!download.allowed) {
-      const result = { content: [{ type: "text" as const, text: download.warning || "" }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: download.warning || "" }] };
     }
 
     const ctxId = genContextId();
@@ -277,7 +229,7 @@ server.tool(
 
     if (isSPA) {
       await page.waitForTimeout(4000);
-      await page.waitForSelector("main, article, .content, #content, [role='main']", { timeout: 10000 }).catch(() => {});
+      await page.waitForSelector("main, article, .content, [role='main']", { timeout: 10000 }).catch(() => {});
     } else {
       await page.waitForTimeout(2000);
     }
@@ -296,14 +248,12 @@ server.tool(
       isFresh = dateCheck.isFresh;
       if (dateCheck.warning) {
         dateWarning = `\n\n${dateCheck.warning}`;
-        if (requireFreshContent && !isFresh) {
-          dateWarning += "\n\n⚠️ GÜNCEL İÇERİK GEREKLİ!";
-        }
+        if (requireFreshContent && !isFresh) dateWarning += "\n\n⚠️ GÜNCEL İÇERİK GEREKLİ!";
       }
     }
 
     let output = `# ${content.title}\n\nURL: ${finalUrl}`;
-    if (isSPA) output += `\n(SPA)`;
+    if (isSPA) output += ` (SPA)`;
     if (pageDate) output += `\n📅 ${new Date(pageDate).toLocaleDateString("tr-TR")}`;
     output += `${dateWarning}\n\n---\n\n${content.text.slice(0, 12000)}`;
 
@@ -312,29 +262,20 @@ server.tool(
       output += links.slice(0, 15).map((l) => `- [${l.text}](${l.href})`).join("\n");
     }
 
-    const result = { content: [{ type: "text" as const, text: output }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: output }] };
   }
 );
 
 // ── TOOL: deep_search ─────────────────────────────────────────────
 server.tool(
   "deep_search",
-  "Doğrudan kaynaklardan arama. GitHub, npm, MDN kullanır.",
+  "Doğrudan kaynaklardan arama.",
   {
     query: z.string().describe("Aranacak terim"),
-    sources: z
-      .array(z.enum(["github", "npm", "mdn", "devdocs"]))
-      .optional()
-      .default(["github", "npm", "mdn"])
-      .describe("Arama yapılacak kaynaklar"),
-    maxAgeMonths: z.number().optional().default(12).describe("Maksimum içerik yaşı (ay)"),
+    sources: z.array(z.enum(["github", "npm", "mdn", "devdocs"])).optional().default(["github", "npm", "mdn"]),
+    maxAgeMonths: z.number().optional().default(12),
   },
   async ({ query, sources, maxAgeMonths }) => {
-    const log = new Logger("deep_search");
-    log.info("Starting deep search", { query, sources, maxAgeMonths });
-
     const ctxId = genContextId();
     const results: { source: string; title: string; url: string; content: string; date?: string; isFresh: boolean }[] = [];
 
@@ -380,22 +321,17 @@ server.tool(
     const oldResults = results.filter((r) => !r.isFresh);
     const sortedResults = [...freshResults, ...oldResults];
 
-    const formatted = sortedResults
-      .map((r, i) => {
-        let line = `[${i + 1}] **${r.title}** (${r.source})`;
-        if (r.date) {
-          line += ` - 📅 ${new Date(r.date).toLocaleDateString("tr-TR")}`;
-          if (!r.isFresh) line += " ⚠️ ESKİ";
-        }
-        line += `\n    URL: ${r.url}\n    ${r.content.slice(0, 300)}...`;
-        return line;
-      })
-      .join("\n\n");
+    const formatted = sortedResults.map((r, i) => {
+      let line = `[${i + 1}] **${r.title}** (${r.source})`;
+      if (r.date) {
+        line += ` - 📅 ${new Date(r.date).toLocaleDateString("tr-TR")}`;
+        if (!r.isFresh) line += " ⚠️ ESKİ";
+      }
+      line += `\n    URL: ${r.url}\n    ${r.content.slice(0, 300)}...`;
+      return line;
+    }).join("\n\n");
 
-    const freshnessSummary = `${freshResults.length}/${results.length} kaynak güncel`;
-    const result = { content: [{ type: "text" as const, text: `# Deep Search: "${query}"\n${freshnessSummary}\n\n${formatted}` }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: `# Deep Search: "${query}"\n${freshResults.length}/${results.length} kaynak güncel\n\n${formatted}` }] };
   }
 );
 
@@ -406,11 +342,10 @@ server.tool(
   {
     owner: z.string().describe("Repo sahibi"),
     repo: z.string().describe("Repo adı"),
-    path: z.string().optional().default("").describe("Klasör yolu"),
-    branch: z.string().optional().default("main").describe("Branch adı"),
+    path: z.string().optional().default(""),
+    branch: z.string().optional().default("main"),
   },
   async ({ owner, repo, path, branch }) => {
-    const log = new Logger("github_repo_files");
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
@@ -419,16 +354,12 @@ server.tool(
     await page.waitForTimeout(3000);
 
     const files = await page.evaluate(() => {
-      const items: { name: string; type: string; url: string }[] = [];
+      const items: { name: string; type: string }[] = [];
       document.querySelectorAll('[data-testid="directory-row"], .react-directory-row, .js-navigation-item').forEach((row) => {
         const nameEl = row.querySelector("a");
-        const isDir = row.querySelector('.octicon-file-directory, [aria-label="Directory"], [data-testid="directory-icon"]');
+        const isDir = row.querySelector('.octicon-file-directory, [aria-label="Directory"]');
         if (nameEl) {
-          items.push({
-            name: nameEl.textContent?.trim() || "",
-            type: isDir ? "dir" : "file",
-            url: `https://github.com${nameEl.getAttribute("href") || ""}`,
-          });
+          items.push({ name: nameEl.textContent?.trim() || "", type: isDir ? "dir" : "file" });
         }
       });
       return items;
@@ -437,9 +368,7 @@ server.tool(
     await browserManager.closeContext(ctxId);
 
     if (files.length === 0) {
-      const result = { content: [{ type: "text" as const, text: `Dosya bulunamadı: ${url}` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `Dosya bulunamadı: ${url}` }] };
     }
 
     const dirs = files.filter((f) => f.type === "dir");
@@ -449,9 +378,7 @@ server.tool(
     if (dirs.length > 0) output += `📁 Klasörler:\n${dirs.map((d) => `  ${d.name}/`).join("\n")}\n\n`;
     if (fileList.length > 0) output += `📄 Dosyalar:\n${fileList.map((f) => `  ${f.name}`).join("\n")}`;
 
-    const result = { content: [{ type: "text" as const, text: output }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: output }] };
   }
 );
 
@@ -463,27 +390,21 @@ server.tool(
     urls: z.array(z.string().url()).min(1).max(5).describe("URL'ler (max 5)"),
   },
   async ({ urls }) => {
-    const log = new Logger("parallel_browse");
-
     const safeUrls: string[] = [];
     const blockedUrls: string[] = [];
 
     for (const url of urls) {
       const safety = isUrlSafe(url);
       const download = checkDownloadRequest(url);
-      if (!safety.safe) {
-        blockedUrls.push(`${url} - ${safety.reason}`);
-      } else if (!download.allowed) {
-        blockedUrls.push(`${url} - İndirme linki`);
+      if (!safety.safe || !download.allowed) {
+        blockedUrls.push(url);
       } else {
         safeUrls.push(url);
       }
     }
 
     if (safeUrls.length === 0) {
-      const result = { content: [{ type: "text" as const, text: `🔒 Tüm URL'ler engellendi.\n\n${blockedUrls.join("\n")}\n\n${SECURITY_WARNING}` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `🔒 Tüm URL'ler engellendi.\n${blockedUrls.join("\n")}` }] };
     }
 
     const ctxId = genContextId();
@@ -499,7 +420,7 @@ server.tool(
 
       await page.close();
 
-      let output = `## ${content.title}\nKaynak: ${url}`;
+      let output = `## ${content.title}\nURL: ${url}`;
       if (pageDate) {
         output += `\n📅 ${new Date(pageDate).toLocaleDateString("tr-TR")}`;
         if (!dateCheck.isFresh) output += " ⚠️ ESKİ";
@@ -513,12 +434,10 @@ server.tool(
 
     let output = allResults.join("\n\n---\n\n");
     if (blockedUrls.length > 0) {
-      output += `\n\n---\n\n🔒 Engellenen URL'ler:\n${blockedUrls.join("\n")}`;
+      output += `\n\n---\n\n🔒 Engellenen: ${blockedUrls.join(", ")}`;
     }
 
-    const result = { content: [{ type: "text" as const, text: output }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: output }] };
   }
 );
 
@@ -530,13 +449,9 @@ server.tool(
     url: z.string().url().describe("URL"),
   },
   async ({ url }) => {
-    const log = new Logger("get_page_links");
-
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      const result = { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
     }
 
     const ctxId = genContextId();
@@ -551,9 +466,7 @@ server.tool(
     const safeLinks = links.filter(l => isUrlSafe(l.href).safe);
     const formatted = safeLinks.slice(0, 100).map((l, i) => `[${i + 1}] ${l.text}\n    ${l.href}`).join("\n");
 
-    const result = { content: [{ type: "text" as const, text: formatted || "Link bulunamadı." }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "text" as const, text: formatted || "Link bulunamadı." }] };
   }
 );
 
@@ -563,16 +476,12 @@ server.tool(
   "Ekran görüntüsü alır.",
   {
     url: z.string().url().describe("URL"),
-    fullPage: z.boolean().optional().default(false).describe("Tam sayfa"),
+    fullPage: z.boolean().optional().default(false),
   },
   async ({ url, fullPage }) => {
-    const log = new Logger("screenshot");
-
     const safety = isUrlSafe(url);
     if (!safety.safe) {
-      const result = { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
-      log.finish(result);
-      return result;
+      return { content: [{ type: "text" as const, text: `🔒 GÜVENLİK: ${safety.reason}` }] };
     }
 
     const ctxId = genContextId();
@@ -584,27 +493,19 @@ server.tool(
     const buffer = await page.screenshot({ fullPage, type: "png" });
     await browserManager.closeContext(ctxId);
 
-    const result = { content: [{ type: "image" as const, data: buffer.toString("base64"), mimeType: "image/png" }] };
-    log.finish(result);
-    return result;
+    return { content: [{ type: "image" as const, data: buffer.toString("base64"), mimeType: "image/png" }] };
   }
 );
 
 // ── SERVER START ──────────────────────────────────────────────────
-logSession("Server starting");
-
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
-logSession("Server connected");
-
 process.on("SIGINT", async () => {
-  logSession("SIGINT");
   await browserManager.close();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
-  logSession("SIGTERM");
   await browserManager.close();
   process.exit(0);
 });
