@@ -1,5 +1,5 @@
 {
-  "name": "websearch-mcp",
+  "name": "freeweb",
   "version": "1.0.0",
   "description": "Playwright-based web search MCP server with parallel tab support",
   "type": "module",

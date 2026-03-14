@@ -5,7 +5,7 @@ import { browserManager } from "./browser.js";
 import { extractContent, extractLinks, parseSearchResults, genContextId } from "./utils.js";
 
 const server = new McpServer({
-  name: "websearch",
+  name: "freeweb",
   version: "1.0.0",
 });
 
