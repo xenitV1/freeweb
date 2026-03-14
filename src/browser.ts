@@ -8,34 +8,153 @@ class BrowserManager {
     if (this.browser) return this.browser;
     this.browser = await chromium.launch({
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-accelerated-2d-canvas",
+        "--no-first-run",
+        "--no-zygote",
+        "--disable-gpu",
+        "--disable-blink-features=AutomationControlled",
+      ],
     });
     return this.browser;
   }
 
-  /** Yeni bir sekme context'i aç (tek browser, izole çerez/önbellek) */
+  /** Stealth context aç - bot tespitini zorlaştır */
   async createContext(id: string): Promise<BrowserContext> {
     if (this.contexts.has(id)) return this.contexts.get(id)!;
     const browser = await this.launch();
+
+    // Rastgele viewport boyutları (gerçekçi aralıkta)
+    const widths = [1366, 1440, 1536, 1920, 2560];
+    const heights = [768, 800, 900, 1080, 1440];
+    const randomWidth = widths[Math.floor(Math.random() * widths.length)];
+    const randomHeight = heights[Math.floor(Math.random() * heights.length)];
+
+    // Gerçekçi user-agent'lar
+    const userAgents = [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+    ];
+    const randomUA = userAgents[Math.floor(Math.random() * userAgents.length)];
+
     const ctx = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      viewport: { width: 1920, height: 1080 },
-      locale: "tr-TR",
-      timezoneId: "Europe/Istanbul",
+      userAgent: randomUA,
+      viewport: { width: randomWidth, height: randomHeight },
+      locale: "en-US",
+      timezoneId: "America/New_York",
+      // WebRTC leak engelle
+      permissions: ["geolocation"],
+      // Canvas fingerprint randomize
+      colorScheme: Math.random() > 0.5 ? "light" : "dark",
+      // HTTP header'lar
+      extraHTTPHeaders: {
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
+        "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+      },
     });
+
+    // Stealth script'leri inject et
+    await ctx.addInitScript(() => {
+      // WebDriver tespitini engelle
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+
+      // Plugins sahtele
+      Object.defineProperty(navigator, "plugins", {
+        get: () => [
+          { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
+          { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai" },
+          { name: "Native Client", filename: "internal-nacl-plugin" },
+        ],
+      });
+
+      // Languages sahtele
+      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
+
+      // Platform sahtele
+      Object.defineProperty(navigator, "platform", { get: () => "Win32" });
+
+      // Hardware concurrency sahtele
+      Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
+
+      // Device memory sahtele
+      Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
+
+      // Chrome object sahtele
+      (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
+
+      // Permission query sahtele
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (parameters: PermissionDescriptor) => {
+        if (parameters.name === "notifications") {
+          return Promise.resolve({ state: "granted" } as PermissionStatus);
+        }
+        return originalQuery.call(window.navigator.permissions, parameters);
+      };
+
+      // Canvas fingerprint noise
+      const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function (type?: string) {
+        if (type === "image/png" && this.width === 220 && this.height === 30) {
+          // Fingerprint canvas tespit - noise ekle
+          const ctx = this.getContext("2d");
+          if (ctx) {
+            const imageData = ctx.getImageData(0, 0, this.width, this.height);
+            for (let i = 0; i < imageData.data.length; i += 4) {
+              imageData.data[i] ^= Math.random() * 2;
+            }
+            ctx.putImageData(imageData, 0, 0);
+          }
+        }
+        return originalToDataURL.apply(this, [type] as [string?]);
+      };
+    });
+
     this.contexts.set(id, ctx);
     return ctx;
   }
 
-  /** Context'te yeni sekme aç */
+  /** Context'te yeni sekme aç - rastgele gecikme ile */
   async openPage(contextId: string, url?: string): Promise<Page> {
     const ctx = await this.createContext(contextId);
     const page = await ctx.newPage();
+
+    // Sayfa yüklenmeden önce ek stealth
+    await page.addInitScript(() => {
+      // Screen resolution sahtele
+      Object.defineProperty(screen, "width", { get: () => 1920 });
+      Object.defineProperty(screen, "height", { get: () => 1080 });
+      Object.defineProperty(screen, "availWidth", { get: () => 1920 });
+      Object.defineProperty(screen, "availHeight", { get: () => 1040 });
+    });
+
     if (url) {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+      // Rastgele gecikme (insan gibi)
+      await this.randomDelay(500, 1500);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
     }
     return page;
+  }
+
+  /** Rastgele gecikme */
+  private randomDelay(min: number, max: number): Promise<void> {
+    const delay = Math.floor(Math.random() * (max - min + 1)) + min;
+    return new Promise((resolve) => setTimeout(resolve, delay));
   }
 
   /** Context'teki tüm sekmeleri kapat */
