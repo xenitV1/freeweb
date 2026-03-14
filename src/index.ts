@@ -29,20 +29,20 @@ server.tool(
     };
 
     await page.goto(engines[engine], { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-    // Bot koruması atlatmak için kısa bekle
     await page.waitForTimeout(2000);
 
     const results = await parseSearchResults(page);
-    await browserManager.closeContext(ctxId);
 
     if (results.length === 0) {
-      // Arama sonuçları parse edilemezse sayfa içeriğini döndür
+      // Context kapatılmadan önce içerik al - BUG FIX
       const content = await extractContent(page);
+      await browserManager.closeContext(ctxId);
       return {
         content: [{ type: "text" as const, text: `Arama sonuçları parse edilemedi. Sayfa içeriği:\n\n${content.text.slice(0, 5000)}` }],
       };
     }
 
+    await browserManager.closeContext(ctxId);
     const formatted = results.slice(0, maxResults).map((r, i) => `[${i + 1}] ${r.title}\n    URL: ${r.url}\n    ${r.snippet}`).join("\n\n");
     return {
       content: [{ type: "text" as const, text: formatted }],
@@ -63,7 +63,7 @@ server.tool(
     const page = await browserManager.openPage(ctxId);
 
     await page.goto(url, { waitUntil: waitFor, timeout: 30000 }).catch(() => {});
-    await page.waitForTimeout(1500); // JS render için
+    await page.waitForTimeout(1500);
 
     const content = await extractContent(page);
     await browserManager.closeContext(ctxId);
@@ -110,7 +110,6 @@ server.tool(
     maxResults: z.number().min(1).max(10).optional().default(5).describe("Sorgu başına maksimum sonuç"),
   },
   async ({ queries, engine, maxResults }) => {
-    // Her sorgu için aynı anda sekme aç — tek browser
     const ctxId = genContextId();
     const tasks = queries.map(async (query) => {
       const page = await browserManager.openPage(ctxId);
@@ -192,6 +191,126 @@ server.tool(
 
     return {
       content: [{ type: "image" as const, data: buffer.toString("base64"), mimeType: "image/png" }],
+    };
+  }
+);
+
+// ── TOOL: deep_search ─────────────────────────────────────────────
+// En az 10 kaynaktan paralel arama yapan gelişmiş tool
+server.tool(
+  "deep_search",
+  "Kapsamlı arama: 3 arama motoru + Wikipedia + haber sitelerinden en az 10 kaynak toplar. Her kaynağı paralel sekmede açar ve içerik çeker.",
+  {
+    query: z.string().describe("Aranacak terim"),
+    maxSources: z.number().min(10).max(20).optional().default(10).describe("Minimum kaynak sayısı (varsayılan 10)"),
+    includeNews: z.boolean().optional().default(true).describe("Haber siteleri dahil edilsin mi"),
+  },
+  async ({ query, maxSources, includeNews }) => {
+    const ctxId = genContextId();
+    const results: { source: string; title: string; url: string; content: string }[] = [];
+
+    // 1. Arama motorlarından paralel sonuç al
+    const searchEngineTasks = ["google", "bing", "duckduckgo"].map(async (engine) => {
+      const page = await browserManager.openPage(ctxId);
+      const urls: Record<string, string> = {
+        google: `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`,
+        bing: `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10&setlang=en`,
+        duckduckgo: `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      };
+
+      await page.goto(urls[engine], { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(2500);
+
+      const searchResults = await parseSearchResults(page);
+      await page.close();
+
+      return searchResults.slice(0, 5).map((r) => ({ ...r, engine }));
+    });
+
+    const searchResults = (await Promise.all(searchEngineTasks)).flat();
+
+    // 2. Wikipedia'dan içerik al
+    const wikiTask = async () => {
+      const page = await browserManager.openPage(ctxId);
+      const wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(query.replace(/\s+/g, "_"))}`;
+      await page.goto(wikiUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+
+      const content = await extractContent(page);
+      await page.close();
+
+      if (content.text.length > 200) {
+        return { source: "Wikipedia", title: content.title, url: wikiUrl, content: content.text.slice(0, 3000) };
+      }
+      return null;
+    };
+
+    // 3. Haber siteleri (isteğe bağlı)
+    const newsTasks = includeNews
+      ? [
+          async () => {
+            const page = await browserManager.openPage(ctxId);
+            await page.goto(`https://news.google.com/search?q=${encodeURIComponent(query)}&hl=en`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+            await page.waitForTimeout(2000);
+            const content = await extractContent(page);
+            await page.close();
+            return { source: "Google News", title: "Google News Results", url: `https://news.google.com/search?q=${encodeURIComponent(query)}`, content: content.text.slice(0, 2000) };
+          },
+          async () => {
+            const page = await browserManager.openPage(ctxId);
+            await page.goto(`https://www.reuters.com/search/news?query=${encodeURIComponent(query)}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+            await page.waitForTimeout(2000);
+            const content = await extractContent(page);
+            await page.close();
+            return { source: "Reuters", title: "Reuters Search", url: `https://www.reuters.com/search/news?query=${encodeURIComponent(query)}`, content: content.text.slice(0, 2000) };
+          },
+        ]
+      : [];
+
+    // 4. En iyi arama sonuçlarının içeriklerini paralel çek
+    const topResults = searchResults.slice(0, Math.min(maxSources - 3, 7)); // Wikipedia ve haberler için yerle bırak
+    const contentTasks = topResults.map(async (result) => {
+      const page = await browserManager.openPage(ctxId);
+      await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(1500);
+
+      const content = await extractContent(page);
+      await page.close();
+
+      return {
+        source: result.engine,
+        title: result.title || content.title,
+        url: result.url,
+        content: content.text.slice(0, 2500),
+      };
+    });
+
+    // Tüm task'ları paralel çalıştır
+    const [wikiResult, ...newsResults] = await Promise.all([wikiTask(), ...newsTasks.map((t) => t())]);
+    const contentResults = await Promise.all(contentTasks);
+
+    // Sonuçları birleştir
+    if (wikiResult) results.push(wikiResult);
+    results.push(...newsResults.filter(Boolean));
+    results.push(...contentResults);
+
+    await browserManager.closeContext(ctxId);
+
+    // Formatla
+    const formatted = results
+      .slice(0, maxSources)
+      .map((r, i) => {
+        return `[${i + 1}] **${r.title}** (${r.source})\n    URL: ${r.url}\n    ${r.content.slice(0, 500)}...`;
+      })
+      .join("\n\n");
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `# Deep Search: "${query}"\nToplam ${results.length} kaynak bulundu.\n\n${formatted}`,
+        },
+      ],
     };
   }
 );
