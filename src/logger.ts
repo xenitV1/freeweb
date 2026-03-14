@@ -1,7 +1,10 @@
 import { writeFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 
-const LOG_DIR = join(process.cwd(), "logs");
+// MCP server farklı cwd ile çalışabilir, bu yüzden sabit yol kullan
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const LOG_DIR = join(__dirname, "..", "logs");
 const LOG_FILE = join(LOG_DIR, `freeweb_${new Date().toISOString().slice(0, 10)}.log`);
 const DEBUG_FILE = join(LOG_DIR, `debug_${new Date().toISOString().slice(0, 10)}.jsonl`);
 
@@ -123,7 +126,7 @@ export class Logger {
       url,
       title: content.title,
       textLength: content.textLength,
-      preview: content.preview.slice(0, 500),
+      preview: typeof content.preview === "string" ? content.preview.slice(0, 500) : "",
     });
   }
 

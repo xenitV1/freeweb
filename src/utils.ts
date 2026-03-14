@@ -1,9 +1,8 @@
 import type { Page } from "playwright";
 
-/** Sayfadaki ana metin içeriğini çıkar - Gelişmiş temizleme ile */
+/** Sayfadaki ana metin içeriğini çıkar */
 export async function extractContent(page: Page): Promise<{ title: string; text: string; html: string }> {
   const result = await page.evaluate(() => {
-    // Helper fonksiyonlar - browser context içinde tanımlı olmalı
     function cleanText(raw: string): string {
       return raw
         .replace(/[ \t]+/g, " ")
@@ -42,7 +41,7 @@ export async function extractContent(page: Page): Promise<{ title: string; text:
 
     const title = document.title;
 
-    // GitHub README special handling
+    // GitHub README
     const readmeEl = document.querySelector("article.markdown-body, .readme, [data-testid='readme']");
     if (readmeEl) {
       const clone = readmeEl.cloneNode(true) as HTMLElement;
@@ -51,14 +50,39 @@ export async function extractContent(page: Page): Promise<{ title: string; text:
       return { title: cleanTitle(title), text, html: clone.innerHTML.slice(0, 50_000) };
     }
 
-    // Documentation sites - main content areas
+    // SPA - iframe
+    const iframe = document.querySelector("iframe[src*='manual'], iframe[src*='docs'], iframe.content");
+    if (iframe) {
+      try {
+        const iframeDoc = (iframe as HTMLIFrameElement).contentDocument;
+        if (iframeDoc && iframeDoc.body) {
+          const mainContent = iframeDoc.querySelector("main, article, .content, .markdown-body");
+          if (mainContent) {
+            const text = cleanText(mainContent.textContent || "");
+            return { title: cleanTitle(title), text, html: mainContent.innerHTML.slice(0, 100_000) };
+          }
+        }
+      } catch {}
+    }
+
+    // SPA - hash-based
+    const hashContent = document.querySelector("#content, .content-wrapper, [data-content], .doc-content, .manual-content");
+    if (hashContent && hashContent.textContent && hashContent.textContent.length > 500) {
+      const clone = hashContent.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("nav, .sidebar, .menu, .toc").forEach((el) => el.remove());
+      const text = cleanText(clone.textContent || "");
+      if (text.length > 200) {
+        return { title: cleanTitle(title), text, html: clone.innerHTML.slice(0, 100_000) };
+      }
+    }
+
+    // Main content
     const mainContent = document.querySelector(
-      "main, article, .content, .documentation, .md-content, .theme-default-content, [role='main'], .post-content, .entry-content"
+      "main, article, .content, .documentation, .md-content, .theme-default-content, [role='main'], .post-content, .entry-content, .markdown-body, .prose"
     );
 
     const clone = (mainContent || document.body).cloneNode(true) as HTMLElement;
 
-    // Kapsamlı gürültü temizleme
     const removeSelectors = [
       "script", "style", "noscript", "svg", "canvas", "iframe", "embed", "object",
       "nav", "header", "footer", "aside",
@@ -90,7 +114,6 @@ export async function extractContent(page: Page): Promise<{ title: string; text:
       clone.querySelectorAll(sel).forEach((el) => el.remove());
     }
 
-    // Display:none olan elementleri temizle
     clone.querySelectorAll("*").forEach((el) => {
       const style = (el as HTMLElement).style;
       if (style.display === "none" || style.visibility === "hidden") {
@@ -107,25 +130,88 @@ export async function extractContent(page: Page): Promise<{ title: string; text:
   return result;
 }
 
-/** GitHub README özel çıkarma */
-export async function extractGitHubReadme(page: Page): Promise<{ title: string; text: string } | null> {
+/** Sayfa tarihini çıkar - çoklu kaynak kontrolü */
+export async function extractDate(page: Page): Promise<string | undefined> {
   return page.evaluate(() => {
-    const readme = document.querySelector("article.markdown-body, .readme");
-    if (!readme) return null;
+    // 1. Schema.org JSON-LD
+    const jsonLd = document.querySelector('script[type="application/ld+json"]');
+    if (jsonLd) {
+      try {
+        const data = JSON.parse(jsonLd.textContent || "{}");
+        if (data.datePublished) return data.datePublished;
+        if (data.dateModified) return data.dateModified;
+        if (data.dateCreated) return data.dateCreated;
+        // Array ise
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            if (item.datePublished) return item.datePublished;
+            if (item.dateModified) return item.dateModified;
+          }
+        }
+      } catch {}
+    }
 
-    const clone = readme.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("svg, .octicon, .anchor, button").forEach((el) => el.remove());
+    // 2. Meta tags
+    const metaDate = document.querySelector('meta[property="article:published_time"], meta[property="article:modified_time"], meta[name="date"], meta[itemprop="datePublished"], meta[itemprop="dateModified"]');
+    if (metaDate) {
+      return metaDate.getAttribute("content") || undefined;
+    }
 
-    const repoName = document.querySelector('[data-testid="breadcrumbs"] a:last-child, .author a')?.textContent || "";
+    // 3. Open Graph
+    const ogTime = document.querySelector('meta[property="og:updated_time"], meta[property="article:published_time"]');
+    if (ogTime) {
+      return ogTime.getAttribute("content") || undefined;
+    }
 
-    return {
-      title: repoName || "GitHub README",
-      text: clone.innerText.replace(/\n{3,}/g, "\n\n").trim(),
-    };
+    // 4. GitHub - relative-time
+    const ghTime = document.querySelector("relative-time");
+    if (ghTime) {
+      return ghTime.getAttribute("datetime") || undefined;
+    }
+
+    // 5. ISO date in HTML
+    const timeEl = document.querySelector("time[datetime], [datetime]");
+    if (timeEl) {
+      return timeEl.getAttribute("datetime") || undefined;
+    }
+
+    // 6. Text-based date patterns
+    const datePatterns = [
+      /(\d{4}-\d{2}-\d{2})/, // 2024-01-15
+      /(\d{1,2}\/\d{1,2}\/\d{4})/, // 01/15/2024
+      /((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i,
+      /(\d{1,2}\s+(?:Ocak|Şubat|Mart|Nisan|Mayıs|Haziran|Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\s+\d{4})/i,
+    ];
+
+    // Published/Updated/Güncelleme text'leri
+    const dateTextSelectors = [
+      ".published, .post-date, .article-date, .entry-date, .date",
+      "[class*='publish'], [class*='updated'], [class*='modified']",
+      ".last-updated, .update-date, .modified-date",
+    ];
+
+    for (const selector of dateTextSelectors) {
+      const el = document.querySelector(selector);
+      if (el && el.textContent) {
+        for (const pattern of datePatterns) {
+          const match = el.textContent.match(pattern);
+          if (match) return match[1];
+        }
+      }
+    }
+
+    // 7. Footer'da telif hakkı tarihi
+    const footer = document.querySelector("footer");
+    if (footer && footer.textContent) {
+      const yearMatch = footer.textContent.match(/(?:©|Copyright|Telif)\s*(\d{4})/i);
+      if (yearMatch) return `${yearMatch[1]}-01-01`;
+    }
+
+    return undefined;
   });
 }
 
-/** Sayfadaki tüm linkleri çıkar - temizlenmiş */
+/** Sayfadaki linkleri çıkar */
 export async function extractLinks(page: Page): Promise<{ text: string; href: string }[]> {
   return page.evaluate(() => {
     return Array.from(document.querySelectorAll("a[href]"))
@@ -141,7 +227,7 @@ export async function extractLinks(page: Page): Promise<{ text: string; href: st
   });
 }
 
-/** Arama sonucu sayfasından sonuçları parse et (Google/Bing/DDG uyumlu) */
+/** Arama sonuçlarını parse et */
 export async function parseSearchResults(page: Page): Promise<{ title: string; url: string; snippet: string }[]> {
   return page.evaluate(() => {
     // Google
@@ -182,7 +268,9 @@ export async function parseSearchResults(page: Page): Promise<{ title: string; u
       };
     });
 
-    return ddgResults.filter((r) => r.url);
+    if (ddgResults.some((r) => r.url)) return ddgResults.filter((r) => r.url);
+
+    return [];
   });
 }
 
