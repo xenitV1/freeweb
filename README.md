@@ -15,6 +15,7 @@ A secure, Playwright-based MCP (Model Context Protocol) server for web browsing,
 
 - 🔎 **General Web Search**: Search the public web without API keys
 - 📚 **Search + Browse**: Open the best search hits and extract readable page content
+- 🤖 **LLMS.txt Aware Browsing**: If a site exposes `llms.txt`, FreeWeb reads it first and includes the guidance in browse output
 - 🧠 **Result Quality Ranking**: Domain-aware scoring, snippet cleanup, freshness hints, and deduping
 - 🔒 **Security**: URL validation, download protection, blocked domain filter
 - 📅 **Freshness Control**: Page date detection, stale content warnings
@@ -75,8 +76,8 @@ Then add to your MCP config:
 | `web_search` | Search the public web without API keys |
 | `search_and_browse` | Search the web, open the best hits, and extract content |
 | `github_search` | Search GitHub repos, code, or issues |
-| `browse_page` | Visit URL and extract content |
-| `smart_browse` | SPA-aware browsing with date validation |
+| `browse_page` | Visit URL, read `llms.txt` if present, and extract content |
+| `smart_browse` | SPA-aware browsing with date validation and `llms.txt` guidance |
 | `deep_search` | Search across GitHub, npm, MDN |
 | `github_repo_files` | List files in a GitHub repo |
 | `parallel_browse` | Visit multiple URLs in parallel (max 5) |
@@ -124,6 +125,7 @@ github_search({
 })
 
 // Smart browse with freshness check
+// If the site exposes /llms.txt (or a subpath llms.txt), FreeWeb reads it first
 smart_browse({
   url: "https://docs.example.com/guide",
   requireFreshContent: true,

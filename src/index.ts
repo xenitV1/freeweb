@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { browserManager } from "./browser.js";
+import { findLlmsTxt, formatLlmsGuidance, type LlmsDocument } from "./llms.js";
 import { extractContent, extractLinks, extractDate, genContextId, parseSearchResults } from "./utils.js";
 
 const RESEARCH_POLICY = "CONTENT RESEARCH POLICY: This tool can research ANY publicly available content including PDFs, EPUBs, books, documentation, and web resources. NO legal restrictions on searches - only technical safety checks (malicious URLs, malware, phishing). Users handle their own copyright compliance.";
@@ -15,10 +16,10 @@ const server = new McpServer({
 // ── SECURITY ──────────────────────────────────────────────────────
 const BLOCKED_DOMAINS = [
   "malware", "phishing", "spam", "scam", "hack", "crack", "warez", "pirate",
-  "porn", "xxx", "adult", "sex", ".tk", ".ml", ".ga", ".cf", ".gq", ".xyz",
+  "porn", "xxx", "adult", "sex",
 ];
 
-const ALLOWED_DOWNLOAD_EXTENSIONS = [".pdf", ".json", ".txt", ".csv", ".xml", ".md", ".html"];
+const BLOCKED_DOWNLOAD_EXTENSIONS = [".zip", ".exe", ".dmg", ".pkg", ".msi", ".apk", ".ipa", ".tar", ".gz", ".tgz", ".rar", ".7z", ".bin", ".iso"];
 
 function isUrlSafe(url: string): { safe: boolean; reason?: string } {
   try {
@@ -49,7 +50,7 @@ function checkDownloadRequest(url: string): { allowed: boolean; warning?: string
   const pathname = parsed.pathname.toLowerCase();
   const isDownload = pathname.includes("/download/") ||
                      pathname.includes("/releases/download/") ||
-                     ALLOWED_DOWNLOAD_EXTENSIONS.some(ext => pathname.endsWith(ext));
+                     BLOCKED_DOWNLOAD_EXTENSIONS.some(ext => pathname.endsWith(ext));
   if (isDownload) {
     return { allowed: false, warning: `⚠️ Download link - user permission required` };
   }
@@ -102,6 +103,7 @@ interface BrowsedSearchResult extends WebSearchResult {
   excerpt: string;
   pageDate?: string;
   browseError?: string;
+  llms?: LlmsDocument | null;
 }
 
 const TRUSTED_DOMAINS = [
@@ -521,6 +523,7 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
 
   try {
     const browsed = await Promise.all(safeResults.map(async (result) => {
+      const llms = await findLlmsTxt(result.url);
       const page = await browserManager.openPage(ctxId);
 
       try {
@@ -550,6 +553,7 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
           pageDate,
           freshnessWarning,
           browseError: undefined,
+          llms,
         } satisfies BrowsedSearchResult;
       } catch (error) {
         return {
@@ -558,6 +562,7 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
           pageTitle: result.title,
           excerpt: "",
           browseError: error instanceof Error ? error.message : "Unknown browse error",
+          llms,
         } satisfies BrowsedSearchResult;
       } finally {
         await page.close().catch(() => {});
@@ -726,6 +731,9 @@ server.tool(
         if (result.freshnessWarning) section += ` ${result.freshnessWarning}`;
       }
       if (result.snippet) section += `\nSearch snippet: ${result.snippet.slice(0, 220)}`;
+      if (result.llms) {
+        section += `\n\n${formatLlmsGuidance(result.llms, { headingLevel: 3, maxSections: 2, maxNotesPerSection: 2, maxLinksPerSection: 2 })}`;
+      }
       section += `\n\n${result.excerpt || "[No readable content extracted]"}`;
       return section;
     }).join("\n\n---\n\n");
@@ -756,6 +764,7 @@ server.tool(
       return { content: [{ type: "text" as const, text: download.warning || "" }] };
     }
 
+    const llms = await findLlmsTxt(url);
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
@@ -776,8 +785,11 @@ server.tool(
 
     const truncated = content.text.length > 15000 ? content.text.slice(0, 15000) + "\n\n[... truncated]" : content.text;
     const dateInfo = pageDate ? `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}` : "";
+    const llmsSection = llms
+      ? `${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3 })}\n\n---\n\n`
+      : "";
 
-    return { content: [{ type: "text" as const, text: `# ${content.title}\n\nURL: ${finalUrl}${dateInfo}${dateWarning}\n\n${truncated}` }] };
+    return { content: [{ type: "text" as const, text: `# ${content.title}\n\nURL: ${finalUrl}${dateInfo}${dateWarning}\n\n${llmsSection}${truncated}` }] };
   }
 );
 
@@ -801,6 +813,7 @@ server.tool(
       return { content: [{ type: "text" as const, text: download.warning || "" }] };
     }
 
+    const llms = await findLlmsTxt(url);
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
@@ -838,7 +851,11 @@ server.tool(
     let output = `# ${content.title}\n\nURL: ${finalUrl}`;
     if (isSPA) output += ` (SPA)`;
     if (pageDate) output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
-    output += `${dateWarning}\n\n---\n\n${content.text.slice(0, 12000)}`;
+    output += `${dateWarning}`;
+    if (llms) {
+      output += `\n\n---\n\n${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3 })}`;
+    }
+    output += `\n\n---\n\n${content.text.slice(0, 12000)}`;
 
     if (links.length > 0) {
       output += `\n\n---\n\n## Links (${links.length})\n`;
