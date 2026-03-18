@@ -1,10 +1,10 @@
-interface LlmsLink {
+export interface LlmsLink {
   title: string;
   url: string;
   note?: string;
 }
 
-interface LlmsSection {
+export interface LlmsSection {
   title: string;
   optional: boolean;
   notes: string[];
@@ -19,10 +19,22 @@ export interface LlmsDocument {
   sections: LlmsSection[];
 }
 
+export interface LlmsRelevantLink extends LlmsLink {
+  sectionTitle: string;
+  optional: boolean;
+  score: number;
+}
+
 const MAX_LLMS_BYTES = 60_000;
 const FETCH_TIMEOUT_MS = 3_500;
 const llmsCache = new Map<string, LlmsDocument | null>();
 const llmsInflight = new Map<string, Promise<LlmsDocument | null>>();
+const llmsTargetCache = new Map<string, LlmsDocument | null>();
+const QUERY_STOP_WORDS = new Set([
+  "a", "an", "and", "api", "are", "as", "at", "be", "best", "by", "docs", "documentation", "for",
+  "from", "guide", "how", "in", "into", "is", "it", "of", "on", "or", "reference", "site",
+  "the", "this", "to", "what", "with",
+]);
 
 function unique<T>(items: T[]): T[] {
   return Array.from(new Set(items));
@@ -52,6 +64,27 @@ function getHeadingText(line: string, level: number): string | undefined {
 
 function normalizeUrlCandidate(raw: string): string {
   return raw.replace(/[),.;]+$/, "").trim();
+}
+
+function normalizeTargetUrl(targetUrl: string): string {
+  const parsed = new URL(targetUrl);
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function buildQueryTokens(query: string): string[] {
+  return Array.from(new Set(
+    query
+      .toLowerCase()
+      .split(/[^a-z0-9.#+-]+/i)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 1 && !QUERY_STOP_WORDS.has(token))
+  ));
+}
+
+function countTokenHits(text: string, tokens: string[]): number {
+  const haystack = cleanText(text).toLowerCase();
+  return tokens.reduce((count, token) => count + (haystack.includes(token) ? 1 : 0), 0);
 }
 
 function parseListLine(content: string): { link?: LlmsLink; note?: string } {
@@ -254,25 +287,85 @@ async function fetchLlmsCandidate(candidateUrl: string): Promise<LlmsDocument | 
 
 export async function findLlmsTxt(targetUrl: string): Promise<LlmsDocument | null> {
   try {
-    const candidates = buildLlmsCandidates(targetUrl);
+    const cacheKey = normalizeTargetUrl(targetUrl);
+    if (llmsTargetCache.has(cacheKey)) return llmsTargetCache.get(cacheKey) ?? null;
+
+    const candidates = buildLlmsCandidates(cacheKey);
     for (const candidate of candidates) {
       const result = await fetchLlmsCandidate(candidate);
-      if (result) return result;
+      if (result) {
+        llmsTargetCache.set(cacheKey, result);
+        return result;
+      }
     }
+
+    llmsTargetCache.set(cacheKey, null);
     return null;
   } catch {
     return null;
   }
 }
 
+export function findRelevantLlmsLinks(
+  doc: LlmsDocument,
+  query: string,
+  options: { maxLinks?: number; includeOptional?: boolean } = {},
+): LlmsRelevantLink[] {
+  const maxLinks = options.maxLinks ?? 4;
+  const includeOptional = options.includeOptional ?? true;
+  const tokens = buildQueryTokens(query);
+  if (tokens.length === 0) return [];
+
+  const scored = doc.sections.flatMap((section) => section.links.map((link) => {
+    const titleHits = countTokenHits(link.title, tokens);
+    const noteHits = countTokenHits(link.note || "", tokens);
+    const sectionHits = countTokenHits(section.title, tokens);
+    const urlHits = countTokenHits(link.url, tokens);
+
+    let score = section.optional ? 1 : 6;
+    score += titleHits * 7;
+    score += noteHits * 3;
+    score += sectionHits * 3;
+    score += urlHits * 2;
+    if (/\b(api|reference|docs|guide|tutorial|oauth|auth|installation|getting started)\b/i.test(`${link.title} ${link.note || ""} ${section.title}`)) score += 2;
+
+    return {
+      ...link,
+      sectionTitle: section.title,
+      optional: section.optional,
+      score,
+    } satisfies LlmsRelevantLink;
+  }))
+    .filter((link) => link.score > 1)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.optional !== b.optional) return a.optional ? 1 : -1;
+      return a.title.localeCompare(b.title);
+    });
+
+  const considered = includeOptional ? scored : scored.filter((link) => !link.optional);
+
+  return unique(considered.map((link) => link.url))
+    .map((url) => considered.find((link) => link.url === url)!)
+    .slice(0, maxLinks);
+}
+
 export function formatLlmsGuidance(
   doc: LlmsDocument,
-  options: { headingLevel?: 2 | 3 | 4; maxSections?: number; maxNotesPerSection?: number; maxLinksPerSection?: number } = {},
+  options: {
+    headingLevel?: 2 | 3 | 4;
+    maxSections?: number;
+    maxNotesPerSection?: number;
+    maxLinksPerSection?: number;
+    query?: string;
+    maxRelevantLinks?: number;
+  } = {},
 ): string {
   const headingLevel = options.headingLevel ?? 2;
   const maxSections = options.maxSections ?? 3;
   const maxNotesPerSection = options.maxNotesPerSection ?? 3;
   const maxLinksPerSection = options.maxLinksPerSection ?? 3;
+  const maxRelevantLinks = options.maxRelevantLinks ?? 3;
   const headingPrefix = "#".repeat(headingLevel);
 
   const lines: string[] = [`${headingPrefix} LLMS.txt Guidance`, `Source: ${doc.sourceUrl}`, `Site: ${doc.title}`];
@@ -297,9 +390,68 @@ export function formatLlmsGuidance(
     }
   }
 
+  if (options.query) {
+    const relevantLinks = findRelevantLlmsLinks(doc, options.query, { maxLinks: maxRelevantLinks, includeOptional: true });
+    if (relevantLinks.length > 0) {
+      lines.push(`${headingPrefix}# Relevant for query`);
+      lines.push(`Query: ${options.query}`);
+      for (const link of relevantLinks) {
+        const optionalLabel = link.optional ? " [Optional]" : "";
+        lines.push(`- [${link.title}](${link.url}) — ${link.sectionTitle}${optionalLabel}${link.note ? `: ${link.note}` : ""}`);
+      }
+    }
+  }
+
   const optionalSections = doc.sections.filter((section) => section.optional).map((section) => section.title);
   if (optionalSections.length > 0) {
     lines.push(`Optional sections available: ${optionalSections.join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+export function formatLlmsInspection(
+  targetUrl: string,
+  doc: LlmsDocument,
+  options: { query?: string; maxSections?: number; maxNotesPerSection?: number; maxLinksPerSection?: number } = {},
+): string {
+  const maxSections = options.maxSections ?? 12;
+  const maxNotesPerSection = options.maxNotesPerSection ?? 5;
+  const maxLinksPerSection = options.maxLinksPerSection ?? 8;
+
+  const lines: string[] = [
+    `# LLMS.txt Inspection`,
+    `Target: ${targetUrl}`,
+    `Found: ${doc.sourceUrl}`,
+    `Site: ${doc.title}`,
+  ];
+
+  if (doc.summary) lines.push(`Summary: ${doc.summary}`);
+  if (doc.introNotes.length > 0) {
+    lines.push("", "## Intro Notes");
+    for (const note of doc.introNotes.slice(0, 8)) lines.push(`- ${note}`);
+  }
+
+  const sections = doc.sections.slice(0, maxSections);
+  lines.push("", `## Sections (${doc.sections.length})`);
+  for (const section of sections) {
+    lines.push(`### ${section.title}${section.optional ? " [Optional]" : ""}`);
+    for (const note of section.notes.slice(0, maxNotesPerSection)) {
+      lines.push(`- ${note}`);
+    }
+    for (const link of section.links.slice(0, maxLinksPerSection)) {
+      lines.push(`- [${link.title}](${link.url})${link.note ? `: ${link.note}` : ""}`);
+    }
+  }
+
+  if (options.query) {
+    const relevant = findRelevantLlmsLinks(doc, options.query, { maxLinks: 6, includeOptional: true });
+    if (relevant.length > 0) {
+      lines.push("", `## Relevant Links for Query`, `Query: ${options.query}`);
+      for (const link of relevant) {
+        lines.push(`- [${link.title}](${link.url}) — ${link.sectionTitle}${link.optional ? " [Optional]" : ""}${link.note ? `: ${link.note}` : ""}`);
+      }
+    }
   }
 
   return lines.join("\n");

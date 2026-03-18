@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { browserManager } from "./browser.js";
-import { findLlmsTxt, formatLlmsGuidance, type LlmsDocument } from "./llms.js";
+import { findLlmsTxt, formatLlmsGuidance, formatLlmsInspection, type LlmsDocument } from "./llms.js";
+import { findMarkdownVersion } from "./markdown.js";
 import { extractContent, extractLinks, extractDate, genContextId, parseSearchResults } from "./utils.js";
 
 const RESEARCH_POLICY = "CONTENT RESEARCH POLICY: This tool can research ANY publicly available content including PDFs, EPUBs, books, documentation, and web resources. NO legal restrictions on searches - only technical safety checks (malicious URLs, malware, phishing). Users handle their own copyright compliance.";
@@ -90,6 +91,7 @@ interface WebSearchResult {
   score: number;
   publishedDate?: string;
   freshnessWarning?: string;
+  llms?: LlmsDocument | null;
 }
 
 interface SearchCollection {
@@ -104,6 +106,8 @@ interface BrowsedSearchResult extends WebSearchResult {
   pageDate?: string;
   browseError?: string;
   llms?: LlmsDocument | null;
+  markdownUrl?: string;
+  contentSource?: "html" | "markdown";
 }
 
 const TRUSTED_DOMAINS = [
@@ -497,7 +501,7 @@ function formatWebSearchResults(query: string, results: WebSearchResult[], attem
   const formatted = limited.map((result, index) => {
     let line = `[${index + 1}] ${result.title}`;
     line += `\n    URL: ${result.url}`;
-    line += `\n    Source: ${result.engine}`;
+    line += `\n    Source: ${result.engine}${result.llms ? " 🤖 LLMS.txt" : ""}`;
     if (result.publishedDate) {
       line += `\n    📅 ${formatDateForDisplay(result.publishedDate)}`;
       if (result.freshnessWarning) line += ` ${result.freshnessWarning}`;
@@ -514,6 +518,29 @@ function formatWebSearchResults(query: string, results: WebSearchResult[], attem
   return `${header}\n\n${formatted}`;
 }
 
+async function enrichResultsWithLlms(results: WebSearchResult[], probeCount: number): Promise<WebSearchResult[]> {
+  const probeTargets = results.slice(0, Math.max(0, probeCount));
+  if (probeTargets.length === 0) return results;
+
+  const docs = await Promise.all(probeTargets.map(async (result) => ({
+    url: result.url,
+    doc: await findLlmsTxt(result.url),
+  })));
+  const docMap = new Map(docs.map((item) => [item.url, item.doc]));
+
+  return results
+    .map((result) => {
+      const llms = docMap.get(result.url);
+      if (!llms) return result;
+      return {
+        ...result,
+        llms,
+        score: result.score + 6,
+      } satisfies WebSearchResult;
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
 async function browseSearchResults(results: WebSearchResult[], browseTop: number, excerptChars: number, maxAgeMonths: number): Promise<BrowsedSearchResult[]> {
   const ctxId = genContextId();
   const safeResults = results
@@ -523,7 +550,8 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
 
   try {
     const browsed = await Promise.all(safeResults.map(async (result) => {
-      const llms = await findLlmsTxt(result.url);
+      const llms = result.llms ?? await findLlmsTxt(result.url);
+      const markdown = llms ? await findMarkdownVersion(result.url) : null;
       const page = await browserManager.openPage(ctxId);
 
       try {
@@ -544,25 +572,30 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
         const pageDate = await extractDate(page);
         const finalUrl = page.url();
         const freshnessWarning = pageDate ? checkDateFreshness(pageDate, maxAgeMonths).warning : result.freshnessWarning;
+        const excerpt = (markdown?.content || content.text).slice(0, excerptChars);
 
         return {
           ...result,
           finalUrl,
-          pageTitle: content.title || result.title,
-          excerpt: content.text.slice(0, excerptChars),
+          pageTitle: markdown?.title || content.title || result.title,
+          excerpt,
           pageDate,
           freshnessWarning,
           browseError: undefined,
           llms,
+          markdownUrl: markdown?.sourceUrl,
+          contentSource: markdown ? "markdown" : "html",
         } satisfies BrowsedSearchResult;
       } catch (error) {
         return {
           ...result,
           finalUrl: result.url,
           pageTitle: result.title,
-          excerpt: "",
+          excerpt: markdown?.content.slice(0, excerptChars) || "",
           browseError: error instanceof Error ? error.message : "Unknown browse error",
           llms,
+          markdownUrl: markdown?.sourceUrl,
+          contentSource: markdown ? "markdown" : "html",
         } satisfies BrowsedSearchResult;
       } finally {
         await page.close().catch(() => {});
@@ -663,6 +696,31 @@ server.tool(
   }
 );
 
+// ── TOOL: inspect_llms_txt ───────────────────────────────────────
+server.tool(
+  "inspect_llms_txt",
+  "Inspect llms.txt for a site or page and show the parsed guidance structure.",
+  {
+    url: z.string().url().describe("Any page or site URL"),
+    query: z.string().optional().describe("Optional query to rank the most relevant llms.txt links"),
+  },
+  async ({ url, query }) => {
+    const safety = isUrlSafe(url);
+    if (!safety.safe) {
+      return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
+    }
+
+    const llms = await findLlmsTxt(url);
+    if (!llms) {
+      return { content: [{ type: "text" as const, text: `No llms.txt found for ${url}` }] };
+    }
+
+    return {
+      content: [{ type: "text" as const, text: formatLlmsInspection(url, llms, { query, maxSections: 12, maxNotesPerSection: 5, maxLinksPerSection: 8 }) }],
+    };
+  }
+);
+
 // ── TOOL: web_search ──────────────────────────────────────────────
 server.tool(
   "web_search",
@@ -673,8 +731,9 @@ server.tool(
     engine: z.enum(["auto", "yahoo", "ask", "marginalia"]).optional().default("auto"),
     domain: z.string().optional().describe("Optional domain filter, e.g. react.dev or github.com"),
     maxAgeMonths: z.number().optional().default(18),
+    checkLlmsTxt: z.boolean().optional().default(false),
   },
-  async ({ query, maxResults, engine, domain, maxAgeMonths }) => {
+  async ({ query, maxResults, engine, domain, maxAgeMonths, checkLlmsTxt }) => {
     const { results, attempts } = await collectWebSearchResults(query, engine, domain, maxResults, maxAgeMonths);
 
     if (results.length === 0) {
@@ -683,8 +742,10 @@ server.tool(
       };
     }
 
+    const enrichedResults = checkLlmsTxt ? await enrichResultsWithLlms(results, Math.min(results.length, maxResults + 2)) : results;
+
     return {
-      content: [{ type: "text" as const, text: formatWebSearchResults(query, results, attempts, maxResults, domain) }],
+      content: [{ type: "text" as const, text: formatWebSearchResults(query, enrichedResults, attempts, maxResults, domain) }],
     };
   }
 );
@@ -718,11 +779,15 @@ server.tool(
       };
     }
 
-    const searchSummary = formatWebSearchResults(query, results, attempts, maxResults, domain);
+    const summaryResults = results.map((result) => browsed.find((item) => item.url === result.url) || result);
+    const searchSummary = formatWebSearchResults(query, summaryResults, attempts, maxResults, domain);
     const detailSections = browsed.map((result, index) => {
       let section = `## ${index + 1}. ${result.pageTitle || result.title}`;
       section += `\nURL: ${result.finalUrl}`;
-      section += `\nSource: ${result.engine}`;
+      section += `\nSource: ${result.engine}${result.llms ? " 🤖 LLMS.txt" : ""}`;
+      if (result.contentSource === "markdown" && result.markdownUrl) {
+        section += `\nContent source: Markdown fallback (${result.markdownUrl})`;
+      }
       if (result.pageDate) {
         section += `\n📅 ${formatDateForDisplay(result.pageDate)}`;
         if (result.freshnessWarning) section += ` ${result.freshnessWarning}`;
@@ -732,7 +797,14 @@ server.tool(
       }
       if (result.snippet) section += `\nSearch snippet: ${result.snippet.slice(0, 220)}`;
       if (result.llms) {
-        section += `\n\n${formatLlmsGuidance(result.llms, { headingLevel: 3, maxSections: 2, maxNotesPerSection: 2, maxLinksPerSection: 2 })}`;
+        section += `\n\n${formatLlmsGuidance(result.llms, {
+          headingLevel: 3,
+          maxSections: 2,
+          maxNotesPerSection: 2,
+          maxLinksPerSection: 2,
+          query,
+          maxRelevantLinks: 3,
+        })}`;
       }
       section += `\n\n${result.excerpt || "[No readable content extracted]"}`;
       return section;
@@ -765,6 +837,7 @@ server.tool(
     }
 
     const llms = await findLlmsTxt(url);
+    const markdown = llms ? await findMarkdownVersion(url) : null;
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
@@ -783,13 +856,16 @@ server.tool(
       if (dateCheck.warning) dateWarning = `\n\n${dateCheck.warning}`;
     }
 
-    const truncated = content.text.length > 15000 ? content.text.slice(0, 15000) + "\n\n[... truncated]" : content.text;
+    const preferredTitle = markdown?.title || content.title;
+    const preferredText = markdown?.content || content.text;
+    const truncated = preferredText.length > 15000 ? preferredText.slice(0, 15000) + "\n\n[... truncated]" : preferredText;
     const dateInfo = pageDate ? `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}` : "";
+    const contentSourceInfo = markdown?.sourceUrl ? `\nContent source: Markdown fallback (${markdown.sourceUrl})` : "";
     const llmsSection = llms
       ? `${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3 })}\n\n---\n\n`
       : "";
 
-    return { content: [{ type: "text" as const, text: `# ${content.title}\n\nURL: ${finalUrl}${dateInfo}${dateWarning}\n\n${llmsSection}${truncated}` }] };
+    return { content: [{ type: "text" as const, text: `# ${preferredTitle}\n\nURL: ${finalUrl}${dateInfo}${contentSourceInfo}${dateWarning}\n\n${llmsSection}${truncated}` }] };
   }
 );
 
@@ -814,6 +890,7 @@ server.tool(
     }
 
     const llms = await findLlmsTxt(url);
+    const markdown = llms ? await findMarkdownVersion(url) : null;
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
@@ -848,14 +925,18 @@ server.tool(
       }
     }
 
-    let output = `# ${content.title}\n\nURL: ${finalUrl}`;
+    const preferredTitle = markdown?.title || content.title;
+    const preferredText = markdown?.content || content.text;
+
+    let output = `# ${preferredTitle}\n\nURL: ${finalUrl}`;
     if (isSPA) output += ` (SPA)`;
     if (pageDate) output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
+    if (markdown?.sourceUrl) output += `\nContent source: Markdown fallback (${markdown.sourceUrl})`;
     output += `${dateWarning}`;
     if (llms) {
       output += `\n\n---\n\n${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3 })}`;
     }
-    output += `\n\n---\n\n${content.text.slice(0, 12000)}`;
+    output += `\n\n---\n\n${preferredText.slice(0, 12000)}`;
 
     if (links.length > 0) {
       output += `\n\n---\n\n## Links (${links.length})\n`;

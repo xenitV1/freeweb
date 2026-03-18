@@ -15,8 +15,10 @@ A secure, Playwright-based MCP (Model Context Protocol) server for web browsing,
 
 - 🔎 **General Web Search**: Search the public web without API keys
 - 📚 **Search + Browse**: Open the best search hits and extract readable page content
+- 🔍 **LLMS.txt Inspection**: Inspect and debug `llms.txt` files directly
 - 🤖 **LLMS.txt Aware Browsing**: If a site exposes `llms.txt`, FreeWeb reads it first and includes the guidance in browse output
-- 🧠 **Result Quality Ranking**: Domain-aware scoring, snippet cleanup, freshness hints, and deduping
+- 📝 **Markdown Fallback**: For llms-aware sites, tries `.md` page variants before falling back to HTML extraction
+- 🧠 **Result Quality Ranking**: Domain-aware scoring, snippet cleanup, freshness hints, deduping, and optional `llms.txt` badges in search results
 - 🔒 **Security**: URL validation, download protection, blocked domain filter
 - 📅 **Freshness Control**: Page date detection, stale content warnings
 - ⚡ **SPA Support**: Auto-detection and handling of React/Vue/Next.js apps
@@ -73,6 +75,7 @@ Then add to your MCP config:
 
 | Tool | Description |
 |------|-------------|
+| `inspect_llms_txt` | Inspect and parse a site's `llms.txt` guidance |
 | `web_search` | Search the public web without API keys |
 | `search_and_browse` | Search the web, open the best hits, and extract content |
 | `github_search` | Search GitHub repos, code, or issues |
@@ -102,12 +105,19 @@ Every page visit includes:
 ## Examples
 
 ```javascript
+// Inspect a site's llms.txt file
+inspect_llms_txt({
+  url: "https://scroll.pics",
+  query: "ebook reader privacy"
+})
+
 // Search the public web
 web_search({
   query: "next.js auth guide",
   maxResults: 5,
   engine: "auto",
-  maxAgeMonths: 18
+  maxAgeMonths: 18,
+  checkLlmsTxt: true
 })
 
 // Search, open top hits, and extract content
