@@ -2,7 +2,7 @@
 
 **Give your LLM unlimited web access - no API keys, no rate limits, no restrictions.**
 
-A secure, Playwright-based MCP (Model Context Protocol) server for web browsing and GitHub search. Provides tools for AI assistants to browse pages, search GitHub, and extract web content - completely free and unrestricted.
+A secure, Playwright-based MCP (Model Context Protocol) server for web browsing, general web search, and GitHub search. Provides tools for AI assistants to search the public web, browse pages, search GitHub, and extract web content - completely free and unrestricted.
 
 ## Why FreeWeb?
 
@@ -13,6 +13,9 @@ A secure, Playwright-based MCP (Model Context Protocol) server for web browsing 
 
 ## Features
 
+- 🔎 **General Web Search**: Search the public web without API keys
+- 📚 **Search + Browse**: Open the best search hits and extract readable page content
+- 🧠 **Result Quality Ranking**: Domain-aware scoring, snippet cleanup, freshness hints, and deduping
 - 🔒 **Security**: URL validation, download protection, blocked domain filter
 - 📅 **Freshness Control**: Page date detection, stale content warnings
 - ⚡ **SPA Support**: Auto-detection and handling of React/Vue/Next.js apps
@@ -69,6 +72,8 @@ Then add to your MCP config:
 
 | Tool | Description |
 |------|-------------|
+| `web_search` | Search the public web without API keys |
+| `search_and_browse` | Search the web, open the best hits, and extract content |
 | `github_search` | Search GitHub repos, code, or issues |
 | `browse_page` | Visit URL and extract content |
 | `smart_browse` | SPA-aware browsing with date validation |
@@ -96,6 +101,21 @@ Every page visit includes:
 ## Examples
 
 ```javascript
+// Search the public web
+web_search({
+  query: "next.js auth guide",
+  maxResults: 5,
+  engine: "auto",
+  maxAgeMonths: 18
+})
+
+// Search, open top hits, and extract content
+search_and_browse({
+  query: "react hooks guide",
+  browseTop: 2,
+  excerptChars: 1800
+})
+
 // Search GitHub
 github_search({
   query: "three.js",

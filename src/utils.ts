@@ -226,48 +226,95 @@ export async function extractLinks(page: Page): Promise<{ text: string; href: st
   });
 }
 
-/** Parse search results */
+/** Parse search results from multiple public search engines */
 export async function parseSearchResults(page: Page): Promise<{ title: string; url: string; snippet: string }[]> {
   return page.evaluate(() => {
+    function cleanText(text: string): string {
+      return text
+        .replace(/\s+/g, " ")
+        .replace(/^\s*·\s*/, "")
+        .trim();
+    }
+
+    // Yahoo
+    const yahooResults = Array.from(document.querySelectorAll("div.compTitle.options-toggle")).map((item) => {
+      const linkEl = item.querySelector("a[href]") as HTMLAnchorElement | null;
+      const titleEl = item.querySelector("h3, .title span.d-b, .title, span.d-b.fz-20");
+      const snippetEl = item.parentElement?.querySelector(".compText p, .compText");
+      return {
+        title: cleanText(titleEl?.textContent || linkEl?.textContent || ""),
+        url: linkEl?.href || "",
+        snippet: cleanText(snippetEl?.textContent || ""),
+      };
+    }).filter((r) => r.title && r.url);
+
+    if (yahooResults.length > 0) return yahooResults;
+
+    // Ask.com
+    const askResults = Array.from(document.querySelectorAll("div.result[data-testid='result']")).map((item) => {
+      const linkEl = item.querySelector("a.result-title-link[href]") as HTMLAnchorElement | null;
+      const snippetEl = item.querySelector(".result-abstract, .result-description, p");
+      return {
+        title: cleanText(linkEl?.textContent || linkEl?.getAttribute("title") || ""),
+        url: linkEl?.href || "",
+        snippet: cleanText(snippetEl?.textContent || ""),
+      };
+    }).filter((r) => r.title && r.url);
+
+    if (askResults.length > 0) return askResults;
+
+    // Marginalia Search
+    const marginaliaResults = Array.from(document.querySelectorAll("h2 a[href]")).map((linkEl) => {
+      const card = linkEl.closest("div.flex.flex-col.grow, article, section, .search-result") as HTMLElement | null;
+      const snippetEl = card?.querySelector("p.mt-2, p, .description, .summary");
+      return {
+        title: cleanText(linkEl.textContent || ""),
+        url: (linkEl as HTMLAnchorElement).href,
+        snippet: cleanText(snippetEl?.textContent || ""),
+      };
+    }).filter((r) => r.title && r.url);
+
+    if (marginaliaResults.length > 0) return marginaliaResults;
+
     // Google
     const googleResults = Array.from(document.querySelectorAll(".g")).map((g) => {
       const titleEl = g.querySelector("h3");
-      const linkEl = g.querySelector("a[href]");
+      const linkEl = g.querySelector("a[href]") as HTMLAnchorElement | null;
       const snippetEl = g.querySelector("[data-sncf], .VwiC3b, [style*='-webkit-line-clamp']");
       return {
-        title: titleEl?.textContent?.trim() || "",
-        url: linkEl ? (linkEl as HTMLAnchorElement).href : "",
-        snippet: snippetEl?.textContent?.trim() || "",
+        title: cleanText(titleEl?.textContent || ""),
+        url: linkEl?.href || "",
+        snippet: cleanText(snippetEl?.textContent || ""),
       };
-    });
+    }).filter((r) => r.title && r.url);
 
-    if (googleResults.some((r) => r.url)) return googleResults.filter((r) => r.url);
+    if (googleResults.length > 0) return googleResults;
 
     // Bing
     const bingResults = Array.from(document.querySelectorAll(".b_algo")).map((b) => {
-      const titleEl = b.querySelector("h2 a");
+      const titleEl = b.querySelector("h2 a") as HTMLAnchorElement | null;
       const snippetEl = b.querySelector(".b_caption p");
       return {
-        title: titleEl?.textContent?.trim() || "",
-        url: titleEl ? (titleEl as HTMLAnchorElement).href : "",
-        snippet: snippetEl?.textContent?.trim() || "",
+        title: cleanText(titleEl?.textContent || ""),
+        url: titleEl?.href || "",
+        snippet: cleanText(snippetEl?.textContent || ""),
       };
-    });
+    }).filter((r) => r.title && r.url);
 
-    if (bingResults.some((r) => r.url)) return bingResults.filter((r) => r.url);
+    if (bingResults.length > 0) return bingResults;
 
     // DuckDuckGo
     const ddgResults = Array.from(document.querySelectorAll(".result")).map((r) => {
-      const titleEl = r.querySelector(".result__title a");
+      const titleEl = r.querySelector(".result__title a") as HTMLAnchorElement | null;
       const snippetEl = r.querySelector(".result__snippet");
       return {
-        title: titleEl?.textContent?.trim() || "",
-        url: titleEl ? (titleEl as HTMLAnchorElement).href : "",
-        snippet: snippetEl?.textContent?.trim() || "",
+        title: cleanText(titleEl?.textContent || ""),
+        url: titleEl?.href || "",
+        snippet: cleanText(snippetEl?.textContent || ""),
       };
-    });
+    }).filter((r) => r.title && r.url);
 
-    if (ddgResults.some((r) => r.url)) return ddgResults.filter((r) => r.url);
+    if (ddgResults.length > 0) return ddgResults;
 
     return [];
   });
