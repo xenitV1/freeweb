@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { browserManager } from "./browser.js";
-import { findLlmsTxt, formatLlmsGuidance, formatLlmsInspection, type LlmsDocument } from "./llms.js";
+import { findLlmsTxt, findRelevantLlmsLinks, formatLlmsGuidance, formatLlmsInspection, type LlmsDocument } from "./llms.js";
 import { findMarkdownVersion } from "./markdown.js";
 import { extractContent, extractLinks, extractDate, genContextId, parseSearchResults } from "./utils.js";
 
@@ -108,6 +108,16 @@ interface BrowsedSearchResult extends WebSearchResult {
   llms?: LlmsDocument | null;
   markdownUrl?: string;
   contentSource?: "html" | "markdown";
+  routedByLlms?: boolean;
+  routedFromUrl?: string;
+  routedReason?: string;
+}
+
+interface LlmsRouteDecision {
+  requestUrl: string;
+  targetUrl: string;
+  routed: boolean;
+  reason?: string;
 }
 
 const TRUSTED_DOMAINS = [
@@ -216,6 +226,78 @@ function normalizeSearchResultUrl(rawUrl: string): string {
   } catch {
     return rawUrl;
   }
+}
+
+function normalizeComparableUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function isSameSiteUrl(baseUrl: string, candidateUrl: string): boolean {
+  try {
+    const baseHost = new URL(baseUrl).hostname.toLowerCase().replace(/^www\./, "");
+    const candidateHost = new URL(candidateUrl).hostname.toLowerCase().replace(/^www\./, "");
+    return domainMatches(candidateHost, baseHost) || domainMatches(baseHost, candidateHost);
+  } catch {
+    return false;
+  }
+}
+
+function deriveRouteTargetUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.pathname.endsWith(".html.md")) {
+      parsed.pathname = parsed.pathname.slice(0, -3);
+      return parsed.toString();
+    }
+    if (parsed.pathname.endsWith(".md")) {
+      parsed.pathname = parsed.pathname.slice(0, -3);
+      return parsed.toString();
+    }
+    return parsed.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function resolveLlmsRoute(url: string, llms: LlmsDocument | null | undefined, query?: string, followLlmsLinks = true): LlmsRouteDecision {
+  const requestUrl = normalizeComparableUrl(url);
+  if (!followLlmsLinks || !llms || !query) {
+    return { requestUrl, targetUrl: requestUrl, routed: false };
+  }
+
+  const relevantLinks = findRelevantLlmsLinks(llms, query, { maxLinks: 6, includeOptional: true })
+    .map((link) => {
+      const targetUrl = deriveRouteTargetUrl(link.url);
+      let score = link.score;
+      if (isSameSiteUrl(requestUrl, targetUrl)) score += 8;
+      if (/\.(html|md)$/i.test(link.url)) score += 2;
+      if (/\b(api|reference|docs|guide|tutorial|oauth|auth|get started|quickstart|example)\b/i.test(`${link.title} ${link.note || ""} ${link.sectionTitle}`)) score += 3;
+      if (link.optional) score -= 2;
+      return { ...link, targetUrl, score };
+    })
+    .filter((link) => isSameSiteUrl(requestUrl, link.targetUrl))
+    .filter((link) => isUrlSafe(link.targetUrl).safe)
+    .filter((link) => checkDownloadRequest(link.targetUrl).allowed)
+    .sort((a, b) => b.score - a.score);
+
+  const best = relevantLinks[0];
+  if (!best) return { requestUrl, targetUrl: requestUrl, routed: false };
+  if (best.score < 10) return { requestUrl, targetUrl: requestUrl, routed: false };
+  if (normalizeComparableUrl(best.targetUrl) === requestUrl) return { requestUrl, targetUrl: requestUrl, routed: false };
+
+  const sectionLabel = best.optional ? `${best.sectionTitle} section` : best.sectionTitle;
+  return {
+    requestUrl,
+    targetUrl: best.targetUrl,
+    routed: true,
+    reason: `${best.title} (${sectionLabel})`,
+  };
 }
 
 function isInternalSearchEngineUrl(url: string): boolean {
@@ -541,7 +623,14 @@ async function enrichResultsWithLlms(results: WebSearchResult[], probeCount: num
     .sort((a, b) => b.score - a.score);
 }
 
-async function browseSearchResults(results: WebSearchResult[], browseTop: number, excerptChars: number, maxAgeMonths: number): Promise<BrowsedSearchResult[]> {
+async function browseSearchResults(
+  results: WebSearchResult[],
+  browseTop: number,
+  excerptChars: number,
+  maxAgeMonths: number,
+  query?: string,
+  followLlmsLinks = true,
+): Promise<BrowsedSearchResult[]> {
   const ctxId = genContextId();
   const safeResults = results
     .filter((result) => isUrlSafe(result.url).safe)
@@ -551,11 +640,13 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
   try {
     const browsed = await Promise.all(safeResults.map(async (result) => {
       const llms = result.llms ?? await findLlmsTxt(result.url);
-      const markdown = llms ? await findMarkdownVersion(result.url) : null;
+      const route = resolveLlmsRoute(result.url, llms, query, followLlmsLinks);
+      const activeUrl = route.targetUrl;
+      const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
       const page = await browserManager.openPage(ctxId);
 
       try {
-        await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+        await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
 
         const isSPA = await page.evaluate(() => {
           return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
@@ -585,17 +676,23 @@ async function browseSearchResults(results: WebSearchResult[], browseTop: number
           llms,
           markdownUrl: markdown?.sourceUrl,
           contentSource: markdown ? "markdown" : "html",
+          routedByLlms: route.routed,
+          routedFromUrl: route.routed ? route.requestUrl : undefined,
+          routedReason: route.reason,
         } satisfies BrowsedSearchResult;
       } catch (error) {
         return {
           ...result,
-          finalUrl: result.url,
+          finalUrl: activeUrl,
           pageTitle: result.title,
           excerpt: markdown?.content.slice(0, excerptChars) || "",
           browseError: error instanceof Error ? error.message : "Unknown browse error",
           llms,
           markdownUrl: markdown?.sourceUrl,
           contentSource: markdown ? "markdown" : "html",
+          routedByLlms: route.routed,
+          routedFromUrl: route.routed ? route.requestUrl : undefined,
+          routedReason: route.reason,
         } satisfies BrowsedSearchResult;
       } finally {
         await page.close().catch(() => {});
@@ -762,8 +859,9 @@ server.tool(
     domain: z.string().optional().describe("Optional domain filter, e.g. react.dev or github.com"),
     maxAgeMonths: z.number().optional().default(18),
     excerptChars: z.number().min(500).max(5000).optional().default(2200),
+    followLlmsLinks: z.boolean().optional().default(true),
   },
-  async ({ query, maxResults, browseTop, engine, domain, maxAgeMonths, excerptChars }) => {
+  async ({ query, maxResults, browseTop, engine, domain, maxAgeMonths, excerptChars, followLlmsLinks }) => {
     const { results, attempts } = await collectWebSearchResults(query, engine, domain, maxResults, maxAgeMonths);
 
     if (results.length === 0) {
@@ -772,7 +870,7 @@ server.tool(
       };
     }
 
-    const browsed = await browseSearchResults(results, browseTop, excerptChars, maxAgeMonths);
+    const browsed = await browseSearchResults(results, browseTop, excerptChars, maxAgeMonths, query, followLlmsLinks);
     if (browsed.length === 0) {
       return {
         content: [{ type: "text" as const, text: `${formatWebSearchResults(query, results, attempts, maxResults, domain)}\n\nNo browsable pages were retrieved from the top results.` }],
@@ -785,6 +883,10 @@ server.tool(
       let section = `## ${index + 1}. ${result.pageTitle || result.title}`;
       section += `\nURL: ${result.finalUrl}`;
       section += `\nSource: ${result.engine}${result.llms ? " 🤖 LLMS.txt" : ""}`;
+      if (result.routedByLlms && result.routedFromUrl) {
+        section += `\nLLMS route: ${result.routedFromUrl} → ${result.finalUrl}`;
+        if (result.routedReason) section += `\nRoute reason: ${result.routedReason}`;
+      }
       if (result.contentSource === "markdown" && result.markdownUrl) {
         section += `\nContent source: Markdown fallback (${result.markdownUrl})`;
       }
@@ -822,10 +924,12 @@ server.tool(
   `Visit a URL and extract content. ${RESEARCH_POLICY}`,
   {
     url: z.string().url().describe("URL"),
+    query: z.string().optional().describe("Optional intent so llms.txt can route to a more relevant page"),
+    followLlmsLinks: z.boolean().optional().default(true),
     waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("networkidle"),
     warnIfOlderThanMonths: z.number().optional().default(24),
   },
-  async ({ url, waitFor, warnIfOlderThanMonths }) => {
+  async ({ url, query, followLlmsLinks, waitFor, warnIfOlderThanMonths }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
       return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
@@ -837,11 +941,13 @@ server.tool(
     }
 
     const llms = await findLlmsTxt(url);
-    const markdown = llms ? await findMarkdownVersion(url) : null;
+    const route = resolveLlmsRoute(url, llms, query, followLlmsLinks);
+    const activeUrl = route.targetUrl;
+    const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
-    await page.goto(url, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
+    await page.goto(activeUrl, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
     const content = await extractContent(page);
@@ -860,12 +966,13 @@ server.tool(
     const preferredText = markdown?.content || content.text;
     const truncated = preferredText.length > 15000 ? preferredText.slice(0, 15000) + "\n\n[... truncated]" : preferredText;
     const dateInfo = pageDate ? `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}` : "";
+    const routeInfo = route.routed ? `\nLLMS route: ${route.requestUrl} → ${finalUrl}${route.reason ? `\nRoute reason: ${route.reason}` : ""}` : "";
     const contentSourceInfo = markdown?.sourceUrl ? `\nContent source: Markdown fallback (${markdown.sourceUrl})` : "";
     const llmsSection = llms
-      ? `${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3 })}\n\n---\n\n`
+      ? `${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3, query, maxRelevantLinks: 3 })}\n\n---\n\n`
       : "";
 
-    return { content: [{ type: "text" as const, text: `# ${preferredTitle}\n\nURL: ${finalUrl}${dateInfo}${contentSourceInfo}${dateWarning}\n\n${llmsSection}${truncated}` }] };
+    return { content: [{ type: "text" as const, text: `# ${preferredTitle}\n\nURL: ${finalUrl}${routeInfo}${dateInfo}${contentSourceInfo}${dateWarning}\n\n${llmsSection}${truncated}` }] };
   }
 );
 
@@ -875,10 +982,12 @@ server.tool(
   `Smart page visit: SPA detection, date check. ${RESEARCH_POLICY}`,
   {
     url: z.string().url().describe("URL"),
+    query: z.string().optional().describe("Optional intent so llms.txt can route to a more relevant page"),
+    followLlmsLinks: z.boolean().optional().default(true),
     requireFreshContent: z.boolean().optional().default(true),
     maxAgeMonths: z.number().optional().default(12),
   },
-  async ({ url, requireFreshContent, maxAgeMonths }) => {
+  async ({ url, query, followLlmsLinks, requireFreshContent, maxAgeMonths }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
       return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
@@ -890,11 +999,13 @@ server.tool(
     }
 
     const llms = await findLlmsTxt(url);
-    const markdown = llms ? await findMarkdownVersion(url) : null;
+    const route = resolveLlmsRoute(url, llms, query, followLlmsLinks);
+    const activeUrl = route.targetUrl;
+    const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
     const ctxId = genContextId();
     const page = await browserManager.openPage(ctxId);
 
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+    await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
 
     const isSPA = await page.evaluate(() => {
       return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
@@ -930,11 +1041,15 @@ server.tool(
 
     let output = `# ${preferredTitle}\n\nURL: ${finalUrl}`;
     if (isSPA) output += ` (SPA)`;
+    if (route.routed) {
+      output += `\nLLMS route: ${route.requestUrl} → ${finalUrl}`;
+      if (route.reason) output += `\nRoute reason: ${route.reason}`;
+    }
     if (pageDate) output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
     if (markdown?.sourceUrl) output += `\nContent source: Markdown fallback (${markdown.sourceUrl})`;
     output += `${dateWarning}`;
     if (llms) {
-      output += `\n\n---\n\n${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3 })}`;
+      output += `\n\n---\n\n${formatLlmsGuidance(llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3, query, maxRelevantLinks: 3 })}`;
     }
     output += `\n\n---\n\n${preferredText.slice(0, 12000)}`;
 
