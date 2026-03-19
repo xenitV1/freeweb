@@ -2,7 +2,7 @@
 
 **Give your LLM unlimited web access - no API keys, no rate limits, no restrictions.**
 
-A secure, Playwright-based MCP (Model Context Protocol) server for web browsing and GitHub search. Provides tools for AI assistants to browse pages, search GitHub, and extract web content - completely free and unrestricted.
+A secure, Playwright-based MCP (Model Context Protocol) server for web browsing, general web search, and GitHub search. Provides tools for AI assistants to search the public web, browse pages, search GitHub, and extract web content - completely free and unrestricted.
 
 ## Why FreeWeb?
 
@@ -13,6 +13,13 @@ A secure, Playwright-based MCP (Model Context Protocol) server for web browsing 
 
 ## Features
 
+- 🔎 **General Web Search**: Search the public web without API keys
+- 📚 **Search + Browse**: Open the best search hits and extract readable page content
+- 🔍 **LLMS.txt Inspection**: Inspect and debug `llms.txt` files directly
+- 🤖 **LLMS.txt Aware Browsing**: If a site exposes `llms.txt`, FreeWeb reads it first and includes the guidance in browse output
+- 🧭 **Best Next Page Routing**: With a query, FreeWeb can follow the most relevant same-site `llms.txt` link before browsing
+- 📝 **Markdown Fallback**: For llms-aware sites, tries `.md` page variants before falling back to HTML extraction
+- 🧠 **Result Quality Ranking**: Domain-aware scoring, snippet cleanup, freshness hints, deduping, and optional `llms.txt` badges in search results
 - 🔒 **Security**: URL validation, download protection, blocked domain filter
 - 📅 **Freshness Control**: Page date detection, stale content warnings
 - ⚡ **SPA Support**: Auto-detection and handling of React/Vue/Next.js apps
@@ -69,9 +76,12 @@ Then add to your MCP config:
 
 | Tool | Description |
 |------|-------------|
+| `inspect_llms_txt` | Inspect and parse a site's `llms.txt` guidance |
+| `web_search` | Search the public web without API keys |
+| `search_and_browse` | Search the web, open the best hits, route via `llms.txt` when relevant, and extract content |
 | `github_search` | Search GitHub repos, code, or issues |
-| `browse_page` | Visit URL and extract content |
-| `smart_browse` | SPA-aware browsing with date validation |
+| `browse_page` | Visit URL, read `llms.txt` if present, optionally route to a better page, and extract content |
+| `smart_browse` | SPA-aware browsing with date validation, `llms.txt` guidance, and optional llms routing |
 | `deep_search` | Search across GitHub, npm, MDN |
 | `github_repo_files` | List files in a GitHub repo |
 | `parallel_browse` | Visit multiple URLs in parallel (max 5) |
@@ -96,6 +106,37 @@ Every page visit includes:
 ## Examples
 
 ```javascript
+// Inspect a site's llms.txt file
+inspect_llms_txt({
+  url: "https://scroll.pics",
+  query: "ebook reader privacy"
+})
+
+// Browse a docs site and let llms.txt route to the best page for your intent
+browse_page({
+  url: "https://www.fastht.ml/docs/",
+  query: "oauth",
+  followLlmsLinks: true
+})
+
+// Search the public web
+web_search({
+  query: "next.js auth guide",
+  maxResults: 5,
+  engine: "auto",
+  maxAgeMonths: 18,
+  checkLlmsTxt: true
+})
+
+// Search, open top hits, and extract content
+// If the result host has llms.txt, FreeWeb can follow a more relevant page automatically
+search_and_browse({
+  query: "react hooks guide",
+  browseTop: 2,
+  excerptChars: 1800,
+  followLlmsLinks: true
+})
+
 // Search GitHub
 github_search({
   query: "three.js",
@@ -104,8 +145,12 @@ github_search({
 })
 
 // Smart browse with freshness check
+// If the site exposes /llms.txt (or a subpath llms.txt), FreeWeb reads it first
+// and can route to a more relevant page when you provide a query
 smart_browse({
   url: "https://docs.example.com/guide",
+  query: "oauth",
+  followLlmsLinks: true,
   requireFreshContent: true,
   maxAgeMonths: 6
 })
