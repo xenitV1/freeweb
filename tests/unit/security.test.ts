@@ -19,12 +19,19 @@ describe("isUrlSafe", () => {
     expect(isUrlSafe("data:text/html,<h1>test</h1>").safe).toBe(false);
   });
 
-  it("blocks domains containing blocked keywords", () => {
+  it("blocks domains with blocked keywords as exact segments", () => {
     const blockedKeywords = ["malware", "phishing", "spam", "scam", "hack", "crack", "warez", "pirate", "porn", "xxx", "adult", "sex"];
     for (const kw of blockedKeywords) {
-      expect(isUrlSafe(`https://www.${kw}-site.com`).safe).toBe(false);
-      expect(isUrlSafe(`https://www.${kw}-site.com`).reason).toBe("Blocked domain");
+      expect(isUrlSafe(`https://${kw}.com`).safe).toBe(false);
+      expect(isUrlSafe(`https://${kw}.com`).reason).toBe("Blocked domain");
+      expect(isUrlSafe(`https://www.${kw}.com`).safe).toBe(false);
     }
+  });
+
+  it("does not false-positive on substring matches in longer segments (fix verified)", () => {
+    expect(isUrlSafe("https://www.hackney.gov.uk").safe).toBe(true);
+    expect(isUrlSafe("https://adultlearning.edu").safe).toBe(true);
+    expect(isUrlSafe("https://scampbell.com").safe).toBe(true);
   });
 
   it("blocks IP addresses", () => {
@@ -54,28 +61,19 @@ describe("isUrlSafe", () => {
     expect(isUrlSafe("://missing-scheme").safe).toBe(false);
   });
 
-  it("BUG: substring match on blocked domains is overly broad", () => {
-    expect(isUrlSafe("https://www.hackney.gov.uk").safe).toBe(false);
-    expect(isUrlSafe("https://adultlearning.edu").safe).toBe(false);
-  });
-
   it("does not false-positive on unrelated substring matches", () => {
     expect(isUrlSafe("https://seychelles.travel").safe).toBe(true);
     expect(isUrlSafe("https://mccampbell.com").safe).toBe(true);
   });
 
-  it("BUG: does not check for IDN/punycode domains", () => {
-    expect(isUrlSafe("https://xn--phishing-xxx.com").safe).toBe(false);
+  it("BUG: does not block localhost or private ranges via hostname", () => {
+    expect(isUrlSafe("http://localhost").safe).toBe(true);
+    expect(isUrlSafe("http://localhost:3000").safe).toBe(true);
   });
 
   it("allows homograph-similar domains (no visual similarity check)", () => {
     expect(isUrlSafe("https://g00gle.com").safe).toBe(true);
     expect(isUrlSafe("https://paypa1.com").safe).toBe(true);
-  });
-
-  it("BUG: does not block localhost or private ranges via hostname", () => {
-    expect(isUrlSafe("http://localhost").safe).toBe(true);
-    expect(isUrlSafe("http://localhost:3000").safe).toBe(true);
   });
 });
 

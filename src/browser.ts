@@ -3,23 +3,41 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 class BrowserManager {
   private browser: Browser | null = null;
   private contexts: Map<string, BrowserContext> = new Map();
+  private launchPromise: Promise<Browser> | null = null;
 
   async launch(): Promise<Browser> {
     if (this.browser) return this.browser;
-    this.browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-        "--disable-gpu",
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
-    return this.browser;
+    if (this.launchPromise) return this.launchPromise;
+
+    this.launchPromise = (async () => {
+      const launched = await chromium.launch({
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--no-first-run",
+          "--no-zygote",
+          "--disable-gpu",
+          "--disable-blink-features=AutomationControlled",
+        ],
+      });
+
+      launched.on("disconnected", () => {
+        this.browser = null;
+        this.launchPromise = null;
+        for (const ctx of this.contexts.values()) {
+          ctx.close().catch(() => {});
+        }
+        this.contexts.clear();
+      });
+
+      this.browser = launched;
+      return launched;
+    })();
+
+    return this.launchPromise;
   }
 
   /** Create stealth context - make bot detection harder */
@@ -146,7 +164,10 @@ class BrowserManager {
     if (url) {
       // Random delay (human-like)
       await this.randomDelay(500, 1500);
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => {});
+      const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 }).catch(() => null);
+      if (!response) {
+        // Page load failed but we continue — page may still be usable
+      }
     }
     return page;
   }
@@ -175,6 +196,7 @@ class BrowserManager {
       await this.browser.close().catch(() => {});
       this.browser = null;
     }
+    this.launchPromise = null;
   }
 }
 

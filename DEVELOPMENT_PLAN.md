@@ -141,11 +141,11 @@ export const SCORING = {
 
 ---
 
-## Aşama 2: Performans Optimizasyonu
+## Aşama 2: Performans Optimizasyonu & Çoklu Tarayıcı
 
-> **Hedef:** Her operasyonda 2-5 saniyelik sabit bekleme süresini ortadan kaldır.
-> **Süre:** 3-4 gün
-> **Kabul Kriteri:** Ortalama arama süresi < 5sn (şu an ~12-15sn), sayfa tarama < 3sn.
+> **Hedef:** Her operasyonda 2-5 saniyelik sabit bekleme süresini ortadan kaldır, bot detection'ı atlatmak için çoklu tarayıcı motoru ekle.
+> **Süre:** 5-6 gün
+> **Kabul Kriteri:** Ortalama arama süresi < 5sn (şu an ~12-15sn), sayfa tarama < 3sn, Chromium blok yiyen siteler Firefox/WebKit ile açılabilsin.
 
 ### 2.1 waitForTimeout → Akıllı Bekleme
 
@@ -183,6 +183,87 @@ const results = await Promise.allSettled(
 - `extractContent`'ın `html` field'ı hiç kullanılmıyor → kaldır veya opsiyonel yap
 - `browserManager.openPage(url?)` parametresi hiçbir çağrıcı tarafından kullanılmıyor → kaldır
 - Kullanılmayan export'lar: `LlmsSection`, `LlmsRelevantLink`, `MarkdownDocument`
+
+### 2.5 Firefox + WebKit Çoklu Tarayıcı Desteği
+
+**Sorun:** Sadece Chromium kullanılıyor. Cloudflare, Datadome, PerimeterX gibi bot koruma sistemleri Chromium'u daha agresif filtreliyor — Firefox ve WebKit ile erişilebilen siteler çok daha fazla.
+
+**Mevcut:** `src/browser.ts` — `chromium.launch()` tek motor, tek fingerprint.
+
+**Hedef mimari:**
+
+```typescript
+import { chromium, firefox, webkit } from "playwright";
+
+type BrowserType = "chromium" | "firefox" | "webkit";
+
+interface BrowserProfile {
+  type: BrowserType;
+  weight: number;           // rastgele seçim ağırlığı
+  userAgents: string[];
+  headers: Record<string, string>;
+  stealthScripts: () => void;
+}
+
+const BROWSER_PROFILES: BrowserProfile[] = [
+  { type: "chromium", weight: 5, ... },
+  { type: "firefox",  weight: 3, ... },
+  { type: "webkit",   weight: 2, ... },
+];
+```
+
+**Uygulanacak adımlar:**
+
+1. **`BrowserManager` çoklu motor desteği**
+   - `launch()` → her motor için ayrı browser instance
+   - `createContext(id, preferredType?)` → motor seçimi parametrik
+   - Motorlar lazy launch (ilk kullanımda başlat)
+
+2. **Motor rotasyon stratejisi**
+   - Varsayılan: rastgele seçim (weight-based)
+   - Fallback: Chromium blok yiyorsa → Firefox dene → WebKit dene
+   - Configurable: sadece belirli motorları kullanma seçeneği
+
+3. **Firefox-specific stealth**
+   - Firefox UA string'leri (Windows, macOS, Linux)
+   - `navigator.webdriver` gizleme (Firefox'ta farklı yöntem)
+   - Plugin spoofing (Firefox'ta farklı — eklenti mimarisi farklı)
+   - `Sec-Ch-Ua` header'ları Firefox'ta yok → kaldır
+   - Canvas fingerprint noise (aynı mantık, farklı davranış)
+
+4. **WebKit-specific stealth**
+   - Safari UA string'leri (macOS, iOS)
+   - `navigator.plugins` Safari'de farklı
+   - `window.chrome` yok → ekleme
+   - Safari-specific header'lar (`Accept` farklı)
+
+5. **Fallback zinciri**
+   ```
+   browseUrl() → chromium ile dene
+                → 403/block tespit → firefox ile tekrar dene
+                                   → hâlâ blok → webkit ile tekrar dene
+                                   → hâlâ blok → hata döndür
+   ```
+
+6. **Anti-bot detection testleri**
+   ```
+   tests/integration/browser-rotation.test.ts
+   - Chromium ile açılan sayfa sayısı
+   - Firefox ile açılan sayfa sayısı
+   - Cloudflare korumalı site testi (ör: known CF site)
+   - Motor rotasyonu fallback testi
+   ```
+
+**Performans etkisi:**
+- 3 browser instance = ~3x memory (her biri ~50-100MB)
+- Lazy launch ile sadece kullanılan motor bellekte
+- Fallback senaryosu: +3-5sn (sadece blok yiyince)
+- Paralel kullanımda: tüm motorlar aynı anda aktif olabilir
+
+**Riskler:**
+- Playwright Firefox/WebKit desteği Windows'da sınırlı — CI/CD'de Docker gerekli
+- Firefox headless mode bazı sitelerde farklı render ediyor
+- WebKit (Safari) en az uyumlu motor — bazı modern JS feature'lar eksik
 
 ---
 
@@ -451,7 +532,7 @@ Düşük ←────────┼────────→ Yüksek   (Ç
 |-------|------|------------|-------|
 | **Aşama 0** — Acil Düzeltmeler | 2-3 gün | Yok | 🔲 Başlanmadı |
 | **Aşama 1** — Mimari Refaktoring | 4-5 gün | Aşama 0 | 🔲 Başlanmadı |
-| **Aşama 2** — Performans | 3-4 gün | Aşama 1 | 🔲 Başlanmadı |
+| **Aşama 2** — Performans & Çoklu Tarayıcı | 5-6 gün | Aşama 1 | 🔲 Başlanmadı |
 | **Aşama 3** — Test Altyapısı | ~2 gün | Aşama 1 (paralel) | ✅ Tamamlandı (189 test) |
 | **Aşama 4** — MCP Protocol | 3-4 gün | Aşama 0 | 🔲 Başlanmadı |
 | **Aşama 5** — Arama Kalitesi | 5-7 gün | Aşama 1 + 2 | 🔲 Başlanmadı |

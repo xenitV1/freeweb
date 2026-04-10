@@ -90,8 +90,9 @@ export function isUrlSafe(url: string): { safe: boolean; reason?: string } {
       return { safe: false, reason: `Unsafe protocol: ${parsed.protocol}` };
     }
     const hostname = parsed.hostname.toLowerCase();
+    const hostSegments = new Set(hostname.split("."));
     for (const blocked of BLOCKED_DOMAINS) {
-      if (hostname.includes(blocked)) {
+      if (hostSegments.has(blocked)) {
         return { safe: false, reason: `Blocked domain` };
       }
     }

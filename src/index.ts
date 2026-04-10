@@ -717,6 +717,8 @@ server.tool(
   },
   async ({ query, type, maxResults, sortByUpdated }) => {
     const ctxId = genContextId();
+    let results: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
+    try {
     const page = await browserManager.openPage(ctxId);
 
     const sortParam = sortByUpdated ? "&s=updated&o=desc" : "";
@@ -726,7 +728,7 @@ server.tool(
     await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(4000);
 
-    const results = await page.evaluate(() => {
+    results = await page.evaluate(() => {
       const items: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
 
       document.querySelectorAll('[data-testid="results-list"] > div').forEach((item) => {
@@ -769,7 +771,9 @@ server.tool(
       return items;
     });
 
+    } finally {
     await browserManager.closeContext(ctxId);
+    }
 
     const uniqueResults = results.filter((r, i, arr) => arr.findIndex((x) => x.url === r.url) === i);
     if (uniqueResults.length === 0) {
@@ -945,16 +949,21 @@ server.tool(
     const activeUrl = route.targetUrl;
     const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
     const ctxId = genContextId();
-    const page = await browserManager.openPage(ctxId);
+    let content: Awaited<ReturnType<typeof extractContent>>;
+    let pageDate: string | undefined;
+    let finalUrl: string;
+    try {
+      const page = await browserManager.openPage(ctxId);
 
-    await page.goto(activeUrl, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+      await page.goto(activeUrl, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(3000);
 
-    const content = await extractContent(page);
-    const pageDate = await extractDate(page);
-    const finalUrl = page.url();
-
-    await browserManager.closeContext(ctxId);
+      content = await extractContent(page);
+      pageDate = await extractDate(page);
+      finalUrl = page.url();
+    } finally {
+      await browserManager.closeContext(ctxId);
+    }
 
     let dateWarning = "";
     if (pageDate) {
@@ -1003,27 +1012,35 @@ server.tool(
     const activeUrl = route.targetUrl;
     const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
     const ctxId = genContextId();
-    const page = await browserManager.openPage(ctxId);
+    let content: Awaited<ReturnType<typeof extractContent>>;
+    let pageDate: string | undefined;
+    let links: Awaited<ReturnType<typeof extractLinks>>;
+    let finalUrl: string;
+    let isSPA: boolean;
+    try {
+      const page = await browserManager.openPage(ctxId);
 
-    await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+      await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
 
-    const isSPA = await page.evaluate(() => {
-      return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
-    });
+      isSPA = await page.evaluate(() => {
+        return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
+      });
 
-    if (isSPA) {
-      await page.waitForTimeout(4000);
-      await page.waitForSelector("main, article, .content, [role='main']", { timeout: 10000 }).catch(() => {});
-    } else {
-      await page.waitForTimeout(2000);
+      if (isSPA) {
+        await page.waitForTimeout(4000);
+        await page.waitForSelector("main, article, .content, [role='main']", { timeout: 10000 }).catch(() => {});
+      } else {
+        await page.waitForTimeout(2000);
+      }
+
+      content = await extractContent(page);
+      pageDate = await extractDate(page);
+      links = await extractLinks(page);
+
+      finalUrl = page.url();
+    } finally {
+      await browserManager.closeContext(ctxId);
     }
-
-    const content = await extractContent(page);
-    const pageDate = await extractDate(page);
-    const links = await extractLinks(page);
-
-    const finalUrl = page.url();
-    await browserManager.closeContext(ctxId);
 
     let dateWarning = "";
     let isFresh = true;
@@ -1082,6 +1099,7 @@ server.tool(
       devdocs: [`https://devdocs.io/#q=${encodeURIComponent(query)}`],
     };
 
+    try {
     for (const source of sources) {
       const urls = sourceUrls[source];
       if (!urls) continue;
@@ -1110,8 +1128,9 @@ server.tool(
         await page.close();
       }
     }
-
+    } finally {
     await browserManager.closeContext(ctxId);
+    }
 
     const freshResults = results.filter((r) => r.isFresh);
     const oldResults = results.filter((r) => !r.isFresh);
@@ -1143,25 +1162,29 @@ server.tool(
   },
   async ({ owner, repo, path, branch }) => {
     const ctxId = genContextId();
-    const page = await browserManager.openPage(ctxId);
+    let files: { name: string; type: string }[] = [];
+    let url: string;
+    try {
+      const page = await browserManager.openPage(ctxId);
 
-    const url = `https://github.com/${owner}/${repo}/tree/${branch}/${path}`;
-    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-    await page.waitForTimeout(3000);
+      url = `https://github.com/${owner}/${repo}/tree/${branch}/${path}`;
+      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(3000);
 
-    const files = await page.evaluate(() => {
-      const items: { name: string; type: string }[] = [];
-      document.querySelectorAll('[data-testid="directory-row"], .react-directory-row, .js-navigation-item').forEach((row) => {
-        const nameEl = row.querySelector("a");
-        const isDir = row.querySelector('.octicon-file-directory, [aria-label="Directory"]');
-        if (nameEl) {
-          items.push({ name: nameEl.textContent?.trim() || "", type: isDir ? "dir" : "file" });
-        }
+      files = await page.evaluate(() => {
+        const items: { name: string; type: string }[] = [];
+        document.querySelectorAll('[data-testid="directory-row"], .react-directory-row, .js-navigation-item').forEach((row) => {
+          const nameEl = row.querySelector("a");
+          const isDir = row.querySelector('.octicon-file-directory, [aria-label="Directory"]');
+          if (nameEl) {
+            items.push({ name: nameEl.textContent?.trim() || "", type: isDir ? "dir" : "file" });
+          }
+        });
+        return items;
       });
-      return items;
-    });
-
-    await browserManager.closeContext(ctxId);
+    } finally {
+      await browserManager.closeContext(ctxId);
+    }
 
     if (files.length === 0) {
       return { content: [{ type: "text" as const, text: `No files found: ${url}` }] };
@@ -1204,6 +1227,8 @@ server.tool(
     }
 
     const ctxId = genContextId();
+    let allResults: string[];
+    try {
 
     const tasks = safeUrls.map(async (url) => {
       const page = await browserManager.openPage(ctxId);
@@ -1225,8 +1250,10 @@ server.tool(
       return output;
     });
 
-    const allResults = await Promise.all(tasks);
+    allResults = await Promise.all(tasks);
+    } finally {
     await browserManager.closeContext(ctxId);
+    }
 
     let output = allResults.join("\n\n---\n\n");
     if (blockedUrls.length > 0) {
@@ -1251,13 +1278,17 @@ server.tool(
     }
 
     const ctxId = genContextId();
-    const page = await browserManager.openPage(ctxId);
+    let links: Awaited<ReturnType<typeof extractLinks>>;
+    try {
+      const page = await browserManager.openPage(ctxId);
 
-    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-    await page.waitForTimeout(2000);
+      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(2000);
 
-    const links = await extractLinks(page);
-    await browserManager.closeContext(ctxId);
+      links = await extractLinks(page);
+    } finally {
+      await browserManager.closeContext(ctxId);
+    }
 
     const safeLinks = links.filter(l => isUrlSafe(l.href).safe);
     const formatted = safeLinks.slice(0, 100).map((l, i) => `[${i + 1}] ${l.text}\n    ${l.href}`).join("\n");
@@ -1281,13 +1312,17 @@ server.tool(
     }
 
     const ctxId = genContextId();
-    const page = await browserManager.openPage(ctxId);
+    let buffer: Buffer;
+    try {
+      const page = await browserManager.openPage(ctxId);
 
-    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-    await page.waitForTimeout(2500);
+      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(2500);
 
-    const buffer = await page.screenshot({ fullPage, type: "png" });
-    await browserManager.closeContext(ctxId);
+      buffer = await page.screenshot({ fullPage, type: "png" });
+    } finally {
+      await browserManager.closeContext(ctxId);
+    }
 
     return { content: [{ type: "image" as const, data: buffer.toString("base64"), mimeType: "image/png" }] };
   }
