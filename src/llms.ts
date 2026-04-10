@@ -134,7 +134,7 @@ function pushLink(target: LlmsLink[], link: LlmsLink): void {
   target.push({ title, url, note });
 }
 
-function buildLlmsCandidates(targetUrl: string): string[] {
+export function buildLlmsCandidates(targetUrl: string): string[] {
   const parsed = new URL(targetUrl);
   const segments = parsed.pathname.split("/").filter(Boolean);
   const treatLastAsFile = segments.length > 0 && /\.[a-z0-9]{1,8}$/i.test(segments[segments.length - 1]);
@@ -149,7 +149,7 @@ function buildLlmsCandidates(targetUrl: string): string[] {
   return unique(candidates);
 }
 
-function parseLlmsTxt(markdown: string, sourceUrl: string): LlmsDocument | null {
+export function parseLlmsTxt(markdown: string, sourceUrl: string): LlmsDocument | null {
   const normalized = markdown.replace(/\r\n/g, "\n").slice(0, MAX_LLMS_BYTES);
   const lines = normalized.split("\n");
 

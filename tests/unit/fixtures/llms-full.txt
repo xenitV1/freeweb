@@ -1,0 +1,18 @@
+# Example Site
+
+> This is an example llms.txt file for testing
+
+- [Home](https://example.com/): Main page
+- [Getting Started](https://example.com/docs/getting-started): Quick start guide
+- [API Reference](https://example.com/docs/api): Full API docs
+
+## Docs
+
+- [Authentication](https://example.com/docs/auth): OAuth2 and API keys
+- [Webhooks](https://example.com/docs/webhooks): Event notifications
+- [Rate Limits](https://example.com/docs/rate-limits): Usage limits
+
+## Optional
+
+- [Changelog](https://example.com/changelog): Recent updates
+- [Status](https://status.example.com/): Service status

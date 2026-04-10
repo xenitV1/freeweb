@@ -23,7 +23,7 @@ function cleanText(text: string): string {
     .trim();
 }
 
-function buildMarkdownCandidates(targetUrl: string): string[] {
+export function buildMarkdownCandidates(targetUrl: string): string[] {
   const parsed = new URL(normalizeTargetUrl(targetUrl));
   const origin = parsed.origin;
   const pathname = parsed.pathname;
@@ -41,13 +41,13 @@ function buildMarkdownCandidates(targetUrl: string): string[] {
   return Array.from(new Set(candidates));
 }
 
-function looksLikeMarkdown(text: string): boolean {
+export function looksLikeMarkdown(text: string): boolean {
   const sample = text.slice(0, 400).toLowerCase();
   if (sample.includes("<!doctype html") || sample.includes("<html") || sample.includes("<body")) return false;
   return text.length >= MIN_CONTENT_LENGTH;
 }
 
-function extractMarkdownTitle(text: string): string | undefined {
+export function extractMarkdownTitle(text: string): string | undefined {
   const heading = text.match(/^#\s+(.+)$/m);
   if (heading) return cleanText(heading[1]);
 
