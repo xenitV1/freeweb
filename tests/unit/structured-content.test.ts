@@ -301,7 +301,7 @@ describe("SEARCH_ENGINES", () => {
     for (const engine of SEARCH_ENGINES) {
       const url = engine.buildUrl("site:example.com query", "example.com");
       const parsed = new URL(url);
-      const paramValue = parsed.searchParams.values().next().value;
+      const paramValue = parsed.searchParams.values().next().value ?? "";
       const siteCount = (paramValue.match(/site:/g) || []).length;
       expect(siteCount).toBe(1);
     }

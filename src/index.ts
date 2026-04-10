@@ -22,6 +22,28 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
+function generateQueryVariations(query: string): string[] {
+  const variations = [query];
+  const cleaned = query.replace(/\./g, "").replace(/-/g, " ").trim();
+  if (cleaned !== query) variations.push(cleaned);
+  const noSpaces = query.replace(/\s+/g, "-").trim();
+  if (noSpaces !== query) variations.push(noSpaces);
+  const withHyphen = query.replace(/\./g, "-").trim();
+  if (withHyphen !== query && !variations.includes(withHyphen)) variations.push(withHyphen);
+  const orgStyle = query.replace(/\./g, "").replace(/\s+/g, "-").trim();
+  if (orgStyle !== query && !variations.includes(orgStyle)) variations.push(orgStyle);
+  if (query.includes(".")) {
+    const parts = query.split(".");
+    if (parts.length === 2) {
+      const orgName = `${parts[0]}-org`;
+      if (!variations.includes(orgName)) variations.push(orgName);
+      const bare = parts[0];
+      if (bare.length > 1 && !variations.includes(bare)) variations.push(bare);
+    }
+  }
+  return [...new Set(variations)].slice(0, 5);
+}
+
 // ── TOOL: github_search ───────────────────────────────────────────
 server.tool(
   "github_search",
@@ -38,41 +60,26 @@ server.tool(
     try {
     const page = await browserManager.openPage(ctxId);
 
+    const queryVariations = generateQueryVariations(query);
     const sortParam = sortByUpdated ? "&s=updated&o=desc" : "";
     const typeParam = type === "repos" ? "repositories" : type;
-    const url = `https://github.com/search?q=${encodeURIComponent(query)}&type=${typeParam}${sortParam}`;
 
-    await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-    await page.waitForTimeout(4000);
+    for (const q of queryVariations) {
+      if (results.length >= maxResults) break;
+      const url = `https://github.com/search?q=${encodeURIComponent(q)}&type=${typeParam}${sortParam}`;
 
-    results = await page.evaluate(() => {
-      const items: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
+      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(4000);
 
-      document.querySelectorAll('[data-testid="results-list"] > div').forEach((item) => {
-        const titleEl = item.querySelector("a");
-        const descEl = item.querySelector("p");
-        const dateEl = item.querySelector("relative-time, time, [datetime]");
-        const starsEl = item.querySelector('[data-testid="stars-count"], .starring-container span');
-        const langEl = item.querySelector('[data-testid="language"], [itemprop="programmingLanguage"]');
-        if (titleEl) {
-          items.push({
-            title: titleEl.textContent?.trim() || "",
-            url: `https://github.com${titleEl.getAttribute("href") || ""}`,
-            snippet: descEl?.textContent?.trim() || "",
-            updatedAt: dateEl?.getAttribute("datetime") || "",
-            stars: starsEl?.textContent?.trim() || "",
-            language: langEl?.textContent?.trim() || "",
-          });
-        }
-      });
+      const batch = await page.evaluate(() => {
+        const items: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
 
-      if (items.length === 0) {
-        document.querySelectorAll(".repo-list-item").forEach((item) => {
-          const titleEl = item.querySelector("a.v-align-middle");
-          const descEl = item.querySelector("p.col-9");
-          const dateEl = item.querySelector("relative-time");
-          const starsEl = item.querySelector(".pl-2 span");
-          const langEl = item.querySelector("[itemprop='programmingLanguage']");
+        document.querySelectorAll('[data-testid="results-list"] > div').forEach((item) => {
+          const titleEl = item.querySelector("a");
+          const descEl = item.querySelector("p");
+          const dateEl = item.querySelector("relative-time, time, [datetime]");
+          const starsEl = item.querySelector('[data-testid="stars-count"], .starring-container span');
+          const langEl = item.querySelector('[data-testid="language"], [itemprop="programmingLanguage"]');
           if (titleEl) {
             items.push({
               title: titleEl.textContent?.trim() || "",
@@ -84,9 +91,31 @@ server.tool(
             });
           }
         });
-      }
-      return items;
-    });
+
+        if (items.length === 0) {
+          document.querySelectorAll(".repo-list-item").forEach((item) => {
+            const titleEl = item.querySelector("a.v-align-middle");
+            const descEl = item.querySelector("p.col-9");
+            const dateEl = item.querySelector("relative-time");
+            const starsEl = item.querySelector(".pl-2 span");
+            const langEl = item.querySelector("[itemprop='programmingLanguage']");
+            if (titleEl) {
+              items.push({
+                title: titleEl.textContent?.trim() || "",
+                url: `https://github.com${titleEl.getAttribute("href") || ""}`,
+                snippet: descEl?.textContent?.trim() || "",
+                updatedAt: dateEl?.getAttribute("datetime") || "",
+                stars: starsEl?.textContent?.trim() || "",
+                language: langEl?.textContent?.trim() || "",
+              });
+            }
+          });
+        }
+        return items;
+      });
+
+      results.push(...batch);
+    }
 
     } finally {
     await browserManager.closeContext(ctxId);
