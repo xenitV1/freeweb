@@ -25,11 +25,13 @@ export interface LlmsRelevantLink extends LlmsLink {
   score: number;
 }
 
+import { LRUCache, InflightMap } from "./cache.js";
+
 const MAX_LLMS_BYTES = 60_000;
 const FETCH_TIMEOUT_MS = 3_500;
-const llmsCache = new Map<string, LlmsDocument | null>();
-const llmsInflight = new Map<string, Promise<LlmsDocument | null>>();
-const llmsTargetCache = new Map<string, LlmsDocument | null>();
+const llmsCache = new LRUCache<LlmsDocument>(500, 30 * 60 * 1000);
+const llmsInflight = new InflightMap<LlmsDocument | null>();
+const llmsTargetCache = new LRUCache<LlmsDocument>(500, 30 * 60 * 1000);
 const QUERY_STOP_WORDS = new Set([
   "a", "an", "and", "api", "are", "as", "at", "be", "best", "by", "docs", "documentation", "for",
   "from", "guide", "how", "in", "into", "is", "it", "of", "on", "or", "reference", "site",
@@ -66,6 +68,18 @@ function normalizeUrlCandidate(raw: string): string {
   return raw.replace(/[),.;]+$/, "").trim();
 }
 
+export function resolveUrl(raw: string, sourceUrl: string): string | null {
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^#/.test(raw)) return null;
+  if (!raw || !raw.trim()) return null;
+  try {
+    const base = new URL(sourceUrl);
+    return new URL(raw, base.href).href;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeTargetUrl(targetUrl: string): string {
   const parsed = new URL(targetUrl);
   parsed.hash = "";
@@ -87,19 +101,23 @@ function countTokenHits(text: string, tokens: string[]): number {
   return tokens.reduce((count, token) => count + (haystack.includes(token) ? 1 : 0), 0);
 }
 
-function parseListLine(content: string): { link?: LlmsLink; note?: string } {
+function parseListLine(content: string, sourceUrl: string): { link?: LlmsLink; note?: string } {
   const cleaned = cleanText(content.replace(/^[-*+]\s+/, ""));
   if (!cleaned) return {};
 
-  const markdownLink = cleaned.match(/^\[([^\]]+)\]\((https?:\/\/[^)]+)\)(?::\s*(.+))?$/i);
+  const markdownLink = cleaned.match(/^\[([^\]]+)\]\(([^)]+)\)(?::\s*(.+))?$/);
   if (markdownLink) {
-    return {
-      link: {
-        title: stripMarkdown(markdownLink[1]),
-        url: normalizeUrlCandidate(markdownLink[2]),
-        note: markdownLink[3] ? stripMarkdown(markdownLink[3]) : undefined,
-      },
-    };
+    const rawUrl = normalizeUrlCandidate(markdownLink[2]);
+    const resolved = resolveUrl(rawUrl, sourceUrl);
+    if (resolved) {
+      return {
+        link: {
+          title: stripMarkdown(markdownLink[1]),
+          url: resolved,
+          note: markdownLink[3] ? stripMarkdown(markdownLink[3]) : undefined,
+        },
+      };
+    }
   }
 
   const urlMatch = cleaned.match(/https?:\/\/\S+/i);
@@ -114,6 +132,27 @@ function parseListLine(content: string): { link?: LlmsLink; note?: string } {
         note: after || undefined,
       },
     };
+  }
+
+  const relativeMatch = cleaned.match(/^(.+?)(?::\s*(.+))?$/);
+  if (relativeMatch) {
+    const potentialPath = stripMarkdown(relativeMatch[1]);
+    const note = relativeMatch[2] ? stripMarkdown(relativeMatch[2]) : undefined;
+    if (/^\.?\/|^\.\.\/|^\/[^/]/.test(potentialPath)) {
+      const resolved = resolveUrl(potentialPath, sourceUrl);
+      if (resolved) {
+        return {
+          link: {
+            title: potentialPath,
+            url: resolved,
+            note,
+          },
+        };
+      }
+    }
+    if (note) {
+      return { note };
+    }
   }
 
   return { note: stripMarkdown(cleaned) };
@@ -143,7 +182,9 @@ export function buildLlmsCandidates(targetUrl: string): string[] {
   const candidates: string[] = [];
   for (let i = pathSegments.length; i >= 0; i -= 1) {
     const prefix = pathSegments.slice(0, i).join("/");
-    candidates.push(`${parsed.origin}/${prefix ? `${prefix}/` : ""}llms.txt`);
+    const base = `${parsed.origin}/${prefix ? `${prefix}/` : ""}`;
+    candidates.push(`${base}llms.txt`);
+    candidates.push(`${base}llms-full.txt`);
   }
 
   return unique(candidates);
@@ -225,7 +266,7 @@ export function parseLlmsTxt(markdown: string, sourceUrl: string): LlmsDocument 
 
     if (/^[-*+]\s+/.test(trimmed)) {
       flushParagraph();
-      const parsed = parseListLine(trimmed);
+      const parsed = parseListLine(trimmed, sourceUrl);
       if (parsed.link) {
         if (!currentSection) currentSection = { title: "Links", optional: false, notes: [], links: [] };
         pushLink(currentSection.links, parsed.link);
@@ -253,45 +294,100 @@ export function parseLlmsTxt(markdown: string, sourceUrl: string): LlmsDocument 
 }
 
 async function fetchLlmsCandidate(candidateUrl: string): Promise<LlmsDocument | null> {
-  if (llmsCache.has(candidateUrl)) return llmsCache.get(candidateUrl) ?? null;
-  if (llmsInflight.has(candidateUrl)) return llmsInflight.get(candidateUrl)!;
+  const cached = llmsCache.get(candidateUrl);
+  if (cached) return cached;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return llmsInflight.getOrSet(candidateUrl, async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  const promise = fetch(candidateUrl, {
-    method: "GET",
-    redirect: "follow",
-    signal: controller.signal,
-    headers: {
-      "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",
-      "User-Agent": "freeweb-mcp/1.0 (+https://github.com/xenitV1/freeweb)",
-    },
-  })
-    .then(async (response) => {
+    try {
+      const response = await fetch(candidateUrl, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",
+          "User-Agent": "freeweb-mcp/1.0 (+https://github.com/xenitV1/freeweb)",
+        },
+      });
       if (!response.ok) return null;
       const text = await response.text();
-      return parseLlmsTxt(text, candidateUrl);
-    })
-    .catch(() => null)
-    .finally(() => {
+      const result = parseLlmsTxt(text, candidateUrl);
+      if (result) llmsCache.set(candidateUrl, result);
+      return result;
+    } catch {
+      return null;
+    } finally {
       clearTimeout(timeout);
-      llmsInflight.delete(candidateUrl);
-    });
+    }
+  });
+}
 
-  llmsInflight.set(candidateUrl, promise);
-  const result = await promise;
-  llmsCache.set(candidateUrl, result);
-  return result;
+async function fetchLlmsFull(candidateBaseUrl: string, existingDoc: LlmsDocument): Promise<LlmsDocument | null> {
+  try {
+    const fullUrl = candidateBaseUrl.replace(/llms\.txt$/i, "llms-full.txt");
+    if (fullUrl === candidateBaseUrl) return null;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(fullUrl, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",
+          "User-Agent": "freeweb-mcp/1.0 (+https://github.com/xenitV1/freeweb)",
+        },
+      });
+      if (!response.ok) return null;
+      const text = await response.text();
+      if (!text || text.length <= existingDoc.sourceUrl.length * 2) return null;
+      const fullDoc = parseLlmsTxt(text, fullUrl);
+      if (fullDoc) llmsCache.set(fullUrl, fullDoc);
+      return fullDoc;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function shouldTryLlmsFull(doc: LlmsDocument, markdown?: string): boolean {
+  if (markdown !== undefined && markdown.length < 200) return true;
+  const allText = [doc.summary || "", ...doc.introNotes, ...doc.sections.flatMap((s) => s.notes)].join(" ");
+  if (allText.length < 200) return true;
+  if (/llms-full\.txt/i.test(allText)) return true;
+  return false;
 }
 
 export async function findLlmsTxt(targetUrl: string): Promise<LlmsDocument | null> {
   try {
     const cacheKey = normalizeTargetUrl(targetUrl);
-    if (llmsTargetCache.has(cacheKey)) return llmsTargetCache.get(cacheKey) ?? null;
+    const cached = llmsTargetCache.get(cacheKey);
+    if (cached) return cached;
 
     const candidates = buildLlmsCandidates(cacheKey);
-    for (const candidate of candidates) {
+    const llmsOnlyCandidates = candidates.filter((c) => c.endsWith("llms.txt") && !c.endsWith("llms-full.txt"));
+
+    for (const candidate of llmsOnlyCandidates) {
+      const result = await fetchLlmsCandidate(candidate);
+      if (result) {
+        if (shouldTryLlmsFull(result)) {
+          const fullDoc = await fetchLlmsFull(candidate, result);
+          if (fullDoc) {
+            llmsTargetCache.set(cacheKey, fullDoc);
+            return fullDoc;
+          }
+        }
+        llmsTargetCache.set(cacheKey, result);
+        return result;
+      }
+    }
+
+    for (const candidate of candidates.filter((c) => c.endsWith("llms-full.txt"))) {
       const result = await fetchLlmsCandidate(candidate);
       if (result) {
         llmsTargetCache.set(cacheKey, result);
@@ -299,7 +395,6 @@ export async function findLlmsTxt(targetUrl: string): Promise<LlmsDocument | nul
       }
     }
 
-    llmsTargetCache.set(cacheKey, null);
     return null;
   } catch {
     return null;

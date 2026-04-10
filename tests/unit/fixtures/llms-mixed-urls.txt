@@ -2,7 +2,7 @@
 
 - [Absolute Link](https://example.com/page1): First
 - [Another Absolute](https://example.com/page2)
-- relative/page3: This is a relative URL (should be dropped)
+- [Relative Link](/docs/api): Relative URL resolved against source
 - https://example.com/page4: Bare URL with no title bracket
 - [Link with parens](https://example.com/page5?v=1): Description here).
 
@@ -10,3 +10,5 @@
 
 - [Nested](https://example.com/a/b/c/page.html): Deep nested page
 - [Markdown File](https://example.com/docs/guide.md): A markdown file link
+- [Dot Relative](./guide.html): Dot-relative path
+- [Parent Relative](../other): Parent-relative path

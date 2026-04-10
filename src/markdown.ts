@@ -4,10 +4,12 @@ export interface MarkdownDocument {
   content: string;
 }
 
+import { LRUCache, InflightMap } from "./cache.js";
+
 const FETCH_TIMEOUT_MS = 4_000;
 const MIN_CONTENT_LENGTH = 120;
-const markdownCache = new Map<string, MarkdownDocument | null>();
-const markdownInflight = new Map<string, Promise<MarkdownDocument | null>>();
+const markdownCache = new LRUCache<MarkdownDocument>(300, 20 * 60 * 1000);
+const markdownInflight = new InflightMap<MarkdownDocument | null>();
 
 function normalizeTargetUrl(targetUrl: string): string {
   const parsed = new URL(targetUrl);
@@ -58,55 +60,57 @@ export function extractMarkdownTitle(text: string): string | undefined {
 }
 
 async function fetchMarkdownCandidate(candidateUrl: string): Promise<MarkdownDocument | null> {
-  if (markdownCache.has(candidateUrl)) return markdownCache.get(candidateUrl) ?? null;
-  if (markdownInflight.has(candidateUrl)) return markdownInflight.get(candidateUrl)!;
+  const cached = markdownCache.get(candidateUrl);
+  if (cached) return cached;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return markdownInflight.getOrSet(candidateUrl, async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-  const promise = fetch(candidateUrl, {
-    method: "GET",
-    redirect: "follow",
-    signal: controller.signal,
-    headers: {
-      "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",
-      "User-Agent": "freeweb-mcp/1.0 (+https://github.com/xenitV1/freeweb)",
-    },
-  })
-    .then(async (response) => {
+    try {
+      const response = await fetch(candidateUrl, {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: {
+          "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",
+          "User-Agent": "freeweb-mcp/1.0 (+https://github.com/xenitV1/freeweb)",
+        },
+      });
       if (!response.ok) return null;
       const text = await response.text();
       if (!looksLikeMarkdown(text)) return null;
-      return {
+      const result: MarkdownDocument = {
         sourceUrl: candidateUrl,
         title: extractMarkdownTitle(text),
         content: text.trim(),
-      } satisfies MarkdownDocument;
-    })
-    .catch(() => null)
-    .finally(() => {
+      };
+      markdownCache.set(candidateUrl, result);
+      return result;
+    } catch {
+      return null;
+    } finally {
       clearTimeout(timeout);
-      markdownInflight.delete(candidateUrl);
-    });
-
-  markdownInflight.set(candidateUrl, promise);
-  const result = await promise;
-  markdownCache.set(candidateUrl, result);
-  return result;
+    }
+  });
 }
 
 export async function findMarkdownVersion(targetUrl: string): Promise<MarkdownDocument | null> {
   const cacheKey = normalizeTargetUrl(targetUrl);
-  if (markdownCache.has(cacheKey)) return markdownCache.get(cacheKey) ?? null;
+  const cached = markdownCache.get(cacheKey);
+  if (cached) return cached;
 
-  for (const candidate of buildMarkdownCandidates(cacheKey)) {
-    const result = await fetchMarkdownCandidate(candidate);
-    if (result) {
-      markdownCache.set(cacheKey, result);
-      return result;
+  const candidates = buildMarkdownCandidates(cacheKey);
+  const results = await Promise.allSettled(
+    candidates.map((url) => fetchMarkdownCandidate(url)),
+  );
+
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) {
+      markdownCache.set(cacheKey, r.value);
+      return r.value;
     }
   }
 
-  markdownCache.set(cacheKey, null);
   return null;
 }

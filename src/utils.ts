@@ -325,3 +325,114 @@ let counter = 0;
 export function genContextId(): string {
   return `ctx_${Date.now()}_${++counter}`;
 }
+
+export interface StructuredContent {
+  jsonLd: Record<string, unknown>[];
+  tables: { headers: string[]; rows: string[][] }[];
+  lists: { ordered: boolean; items: string[] }[];
+}
+
+export async function extractStructuredContent(page: Page): Promise<StructuredContent> {
+  return page.evaluate(() => {
+    const jsonLd: Record<string, unknown>[] = [];
+    document.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
+      try {
+        jsonLd.push(JSON.parse(el.textContent || "{}"));
+      } catch {}
+    });
+
+    const tables: { headers: string[]; rows: string[][] }[] = [];
+    document.querySelectorAll("table").forEach((table) => {
+      const headers = Array.from(table.querySelectorAll("th")).map((th) => th.textContent?.trim() || "");
+      const rows = Array.from(table.querySelectorAll("tbody tr, tr"))
+        .map((tr) => Array.from(tr.querySelectorAll("td")).map((td) => td.textContent?.trim() || ""))
+        .filter((row) => row.length > 0);
+      if (headers.length > 0 || rows.length > 0) {
+        tables.push({ headers, rows });
+      }
+    });
+
+    const lists: { ordered: boolean; items: string[] }[] = [];
+    document.querySelectorAll("ol, ul").forEach((list) => {
+      const items = Array.from(list.querySelectorAll(":scope > li")).map((li) => li.textContent?.trim() || "");
+      if (items.length > 0) {
+        lists.push({ ordered: list.tagName === "OL", items });
+      }
+    });
+
+    return { jsonLd, tables, lists };
+  });
+}
+
+export async function extractBySelector(page: Page, selector: string): Promise<string> {
+  return page.evaluate(
+    (sel: string) => {
+      const elements = document.querySelectorAll(sel);
+      return Array.from(elements)
+        .map((el) => el.textContent?.trim() || "")
+        .filter(Boolean)
+        .join("\n\n");
+    },
+    selector,
+  );
+}
+
+export interface SearchEngineConfig {
+  name: string;
+  weight: number;
+  buildUrl: (query: string, domain?: string) => string;
+  waitForMs: number;
+}
+
+function normalizeDomain(domain?: string): string | undefined {
+  if (!domain) return undefined;
+  return domain.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").trim().toLowerCase() || undefined;
+}
+
+function sitePrefix(query: string, domain?: string): string {
+  const d = normalizeDomain(domain);
+  return d && !query.includes("site:") ? `site:${d} ${query}` : query;
+}
+
+export const SEARCH_ENGINES: SearchEngineConfig[] = [
+  {
+    name: "yahoo",
+    weight: 28,
+    buildUrl: (q, d) => {
+      const url = new URL("https://search.yahoo.com/search");
+      url.searchParams.set("p", sitePrefix(q, d));
+      return url.toString();
+    },
+    waitForMs: 3500,
+  },
+  {
+    name: "marginalia",
+    weight: 20,
+    buildUrl: (q, d) => {
+      const url = new URL("https://search.marginalia.nu/search");
+      url.searchParams.set("query", sitePrefix(q, d));
+      return url.toString();
+    },
+    waitForMs: 5000,
+  },
+  {
+    name: "ask",
+    weight: 8,
+    buildUrl: (q, d) => {
+      const url = new URL("https://www.ask.com/web");
+      url.searchParams.set("q", sitePrefix(q, d));
+      return url.toString();
+    },
+    waitForMs: 3500,
+  },
+  {
+    name: "duckduckgo",
+    weight: 15,
+    buildUrl: (q, d) => {
+      const url = new URL("https://html.duckduckgo.com/html/");
+      url.searchParams.set("q", sitePrefix(q, d));
+      return url.toString();
+    },
+    waitForMs: 4000,
+  },
+];

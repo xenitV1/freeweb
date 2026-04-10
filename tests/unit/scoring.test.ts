@@ -149,9 +149,11 @@ describe("scoreSearchResult", () => {
   it("gives higher score to Yahoo results (engine weight)", () => {
     const yahooScore = scoreSearchResult("react hooks", { ...baseResult, engine: "yahoo" });
     const marginaliaScore = scoreSearchResult("react hooks", { ...baseResult, engine: "marginalia" });
+    const duckduckgoScore = scoreSearchResult("react hooks", { ...baseResult, engine: "duckduckgo" });
     const askScore = scoreSearchResult("react hooks", { ...baseResult, engine: "ask" });
     expect(yahooScore.score).toBeGreaterThan(marginaliaScore.score);
-    expect(marginaliaScore.score).toBeGreaterThan(askScore.score);
+    expect(marginaliaScore.score).toBeGreaterThan(duckduckgoScore.score);
+    expect(duckduckgoScore.score).toBeGreaterThan(askScore.score);
   });
 
   it("rewards title matches heavily", () => {
@@ -291,12 +293,12 @@ describe("buildWebSearchUrl", () => {
 describe("getWebSearchOrder", () => {
   it("returns all engines in auto mode", () => {
     const order = getWebSearchOrder("auto");
-    expect(order).toEqual(["yahoo", "marginalia", "ask"]);
+    expect(order).toEqual(["yahoo", "marginalia", "ask", "duckduckgo"]);
   });
 
   it("puts specified engine first in specific mode", () => {
     const order = getWebSearchOrder("marginalia");
     expect(order[0]).toBe("marginalia");
-    expect(order).toHaveLength(3);
+    expect(order).toHaveLength(4);
   });
 });

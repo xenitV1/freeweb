@@ -73,14 +73,15 @@ describe("Path traversal in llms.txt candidate building", () => {
 
   it("handles root URL correctly", () => {
     const candidates = buildLlmsCandidates("https://example.com/");
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toBe("https://example.com/llms.txt");
+    expect(candidates).toHaveLength(2);
+    expect(candidates).toContain("https://example.com/llms.txt");
+    expect(candidates).toContain("https://example.com/llms-full.txt");
   });
 
   it("handles URL with file extension correctly", () => {
     const candidates = buildLlmsCandidates("https://example.com/docs/api.html");
     expect(candidates[0]).toBe("https://example.com/docs/llms.txt");
-    expect(candidates[candidates.length - 1]).toBe("https://example.com/llms.txt");
+    expect(candidates).toContain("https://example.com/llms.txt");
   });
 });
 
@@ -167,26 +168,26 @@ describe("Port scanning prevention", () => {
 });
 
 describe("Missing download extensions", () => {
-  it("BUG: does not block .pdf downloads", () => {
-    expect(checkDownloadRequest("https://example.com/manual.pdf").allowed).toBe(true);
+  it("blocks .pdf downloads", () => {
+    expect(checkDownloadRequest("https://example.com/manual.pdf").allowed).toBe(false);
   });
 
-  it("BUG: does not block .doc/.docx downloads", () => {
-    expect(checkDownloadRequest("https://example.com/document.doc").allowed).toBe(true);
-    expect(checkDownloadRequest("https://example.com/document.docx").allowed).toBe(true);
+  it("blocks .doc/.docx downloads", () => {
+    expect(checkDownloadRequest("https://example.com/document.doc").allowed).toBe(false);
+    expect(checkDownloadRequest("https://example.com/document.docx").allowed).toBe(false);
   });
 
-  it("BUG: does not block .xls/.xlsx downloads", () => {
-    expect(checkDownloadRequest("https://example.com/spreadsheet.xls").allowed).toBe(true);
-    expect(checkDownloadRequest("https://example.com/spreadsheet.xlsx").allowed).toBe(true);
+  it("blocks .xls/.xlsx downloads", () => {
+    expect(checkDownloadRequest("https://example.com/spreadsheet.xls").allowed).toBe(false);
+    expect(checkDownloadRequest("https://example.com/spreadsheet.xlsx").allowed).toBe(false);
   });
 
-  it("BUG: does not block .ppt downloads", () => {
-    expect(checkDownloadRequest("https://example.com/presentation.ppt").allowed).toBe(true);
+  it("blocks .ppt downloads", () => {
+    expect(checkDownloadRequest("https://example.com/presentation.ppt").allowed).toBe(false);
   });
 
-  it("BUG: does not block .odt downloads", () => {
-    expect(checkDownloadRequest("https://example.com/document.odt").allowed).toBe(true);
+  it("blocks .odt downloads", () => {
+    expect(checkDownloadRequest("https://example.com/document.odt").allowed).toBe(false);
   });
 
   it("blocks known download extensions", () => {
@@ -216,12 +217,12 @@ describe("Homograph domains", () => {
 });
 
 describe("Localhost variants", () => {
-  it("BUG: allows http://localhost (not an IP, not blocked)", () => {
-    expect(isUrlSafe("http://localhost").safe).toBe(true);
+  it("blocks http://localhost (private hostname)", () => {
+    expect(isUrlSafe("http://localhost").safe).toBe(false);
   });
 
-  it("BUG: allows http://localhost:3000", () => {
-    expect(isUrlSafe("http://localhost:3000").safe).toBe(true);
+  it("blocks http://localhost:3000 (private hostname with port)", () => {
+    expect(isUrlSafe("http://localhost:3000").safe).toBe(false);
   });
 
   it("blocks http://127.0.0.1 (IP address check)", () => {
@@ -232,12 +233,12 @@ describe("Localhost variants", () => {
     expect(isUrlSafe("http://0.0.0.0").safe).toBe(false);
   });
 
-  it("BUG: allows http://[::1] (IPv6 loopback not checked)", () => {
-    expect(isUrlSafe("http://[::1]").safe).toBe(true);
+  it("blocks http://[::1] (IPv6 loopback)", () => {
+    expect(isUrlSafe("http://[::1]").safe).toBe(false);
   });
 
-  it("BUG: allows http://[::1]:8080 (IPv6 loopback with port)", () => {
-    expect(isUrlSafe("http://[::1]:8080").safe).toBe(true);
+  it("blocks http://[::1]:8080 (IPv6 loopback with port)", () => {
+    expect(isUrlSafe("http://[::1]:8080").safe).toBe(false);
   });
 });
 

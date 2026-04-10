@@ -9,7 +9,6 @@ describe("isUrlSafe", () => {
 
   it("allows valid HTTP URLs", () => {
     expect(isUrlSafe("http://example.com")).toEqual({ safe: true });
-    expect(isUrlSafe("http://localhost:3000")).toEqual({ safe: true });
   });
 
   it("blocks non-HTTP protocols", () => {
@@ -66,9 +65,9 @@ describe("isUrlSafe", () => {
     expect(isUrlSafe("https://mccampbell.com").safe).toBe(true);
   });
 
-  it("BUG: does not block localhost or private ranges via hostname", () => {
-    expect(isUrlSafe("http://localhost").safe).toBe(true);
-    expect(isUrlSafe("http://localhost:3000").safe).toBe(true);
+  it("blocks localhost hostname (SSRF prevention)", () => {
+    expect(isUrlSafe("http://localhost").safe).toBe(false);
+    expect(isUrlSafe("http://localhost:3000").safe).toBe(false);
   });
 
   it("allows homograph-similar domains (no visual similarity check)", () => {
@@ -102,12 +101,12 @@ describe("checkDownloadRequest", () => {
     expect(checkDownloadRequest("https://example.com/image.png").allowed).toBe(true);
   });
 
-  it("BUG: does not block .pdf downloads", () => {
-    expect(checkDownloadRequest("https://example.com/manual.pdf").allowed).toBe(true);
+  it("blocks .pdf downloads", () => {
+    expect(checkDownloadRequest("https://example.com/manual.pdf").allowed).toBe(false);
   });
 
-  it("BUG: does not block .doc/.docx downloads", () => {
-    expect(checkDownloadRequest("https://example.com/document.doc").allowed).toBe(true);
-    expect(checkDownloadRequest("https://example.com/document.docx").allowed).toBe(true);
+  it("blocks .doc/.docx downloads", () => {
+    expect(checkDownloadRequest("https://example.com/document.doc").allowed).toBe(false);
+    expect(checkDownloadRequest("https://example.com/document.docx").allowed).toBe(false);
   });
 });

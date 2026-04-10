@@ -67,11 +67,21 @@ describe("parseLlmsTxt", () => {
     expect(urls).toContain("https://example.com/docs/guide.md");
   });
 
-  it("BUG: relative URLs are silently dropped", () => {
+  it("resolves relative URLs against source", () => {
     const doc = parseLlmsTxt(fixture("llms-mixed-urls.txt"), "https://example.com/llms.txt");
     const allLinks = doc!.sections.flatMap((s) => s.links);
     const urls = allLinks.map((l) => l.url);
-    expect(urls).not.toContain("relative/page3");
+
+    expect(urls).toContain("https://example.com/docs/api");
+  });
+
+  it("resolves dot-relative URLs", () => {
+    const doc = parseLlmsTxt(fixture("llms-mixed-urls.txt"), "https://example.com/llms.txt");
+    const allLinks = doc!.sections.flatMap((s) => s.links);
+    const urls = allLinks.map((l) => l.url);
+
+    expect(urls).toContain("https://example.com/guide.html");
+    expect(urls).toContain("https://example.com/other");
   });
 
   it("extracts link notes", () => {
@@ -118,10 +128,18 @@ describe("buildLlmsCandidates", () => {
     expect(candidates).toContain("https://example.com/a/b/llms.txt");
   });
 
+  it("includes llms-full.txt candidates", () => {
+    const candidates = buildLlmsCandidates("https://example.com/docs/guide");
+    expect(candidates).toContain("https://example.com/docs/llms.txt");
+    expect(candidates).toContain("https://example.com/docs/llms-full.txt");
+    expect(candidates).toContain("https://example.com/llms-full.txt");
+  });
+
   it("handles root URL", () => {
     const candidates = buildLlmsCandidates("https://example.com/");
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toBe("https://example.com/llms.txt");
+    expect(candidates).toHaveLength(2);
+    expect(candidates).toContain("https://example.com/llms.txt");
+    expect(candidates).toContain("https://example.com/llms-full.txt");
   });
 
   it("treats last segment with extension as file, not directory", () => {

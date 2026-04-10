@@ -61,6 +61,23 @@ describe("buildWebSearchUrl", () => {
     });
   });
 
+  describe("DuckDuckGo URLs", () => {
+    it("builds DuckDuckGo URL with query", () => {
+      const url = buildWebSearchUrl("react hooks", "duckduckgo");
+      expect(url).toContain("html.duckduckgo.com/html/");
+      const parsed = new URL(url);
+      expect(parsed.searchParams.get("q")).toBe("react hooks");
+    });
+
+    it("builds DuckDuckGo URL with domain filter", () => {
+      const url = buildWebSearchUrl("hooks", "duckduckgo", "react.dev");
+      const parsed = new URL(url);
+      const q = parsed.searchParams.get("q")!;
+      expect(q).toContain("site:react.dev");
+      expect(q).toContain("hooks");
+    });
+  });
+
   describe("URL encoding for special characters", () => {
     it("encodes Turkish characters", () => {
       const url = buildWebSearchUrl("Türkçe arama sonuçları", "yahoo");
@@ -113,7 +130,7 @@ describe("buildWebSearchUrl", () => {
       for (const engine of WEB_SEARCH_ENGINES) {
         const url = buildWebSearchUrl("site:react.dev hooks", engine, "react.dev");
         const parsed = new URL(url);
-        const paramName = engine === "yahoo" ? "p" : engine === "ask" ? "q" : "query";
+        const paramName = engine === "yahoo" ? "p" : engine === "marginalia" ? "query" : "q";
         const query = parsed.searchParams.get(paramName)!;
         expect(query.match(/site:/g)?.length).toBe(1);
       }
