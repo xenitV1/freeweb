@@ -1,6 +1,6 @@
 {
   "name": "@mehmet/freeweb-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Secure MCP server for web browsing with Playwright - GitHub search, page browsing, content extraction",
   "keywords": [
     "mcp",
