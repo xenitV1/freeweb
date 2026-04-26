@@ -7,6 +7,53 @@ import { findLlmsTxt } from "./llms.js";
 import { browserManager } from "./browser.js";
 import { parseSearchResults, genContextId } from "./utils.js";
 
+async function fetchDdgHtmlResults(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
+  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const res = await fetch(searchUrl, {
+      signal: ctrl.signal,
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return [];
+
+    const html = await res.text();
+    const decoded = html.replace(/&amp;/g, "&");
+
+    const results: { title: string; url: string; snippet: string }[] = [];
+    const linkMatches = [...decoded.matchAll(/class="result__a"[^>]*href="([^"]+)"/g)];
+    const snippetMatches = [...decoded.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)];
+    const titleMatches = [...decoded.matchAll(/class="result__a"[^>]*>([\s\S]*?)<\/a>/g)];
+
+    for (let i = 0; i < linkMatches.length; i++) {
+      const href = linkMatches[i][1];
+      const uddgMatch = href.match(/uddg=([^&]+)/);
+      const cleanUrl = uddgMatch ? decodeURIComponent(uddgMatch[1]) : href;
+      if (cleanUrl.includes("duckduckgo.com")) continue;
+
+      const rawTitle = titleMatches[i]?.[1] || "";
+      const rawSnippet = snippetMatches[i]?.[1] || "";
+      const strip = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+      results.push({
+        title: strip(rawTitle),
+        url: cleanUrl,
+        snippet: strip(rawSnippet),
+      });
+    }
+
+    return results;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function collectWebSearchResults(
   query: string,
   engine: WebSearchMode,
@@ -20,6 +67,25 @@ export async function collectWebSearchResults(
 
   try {
     for (const currentEngine of getWebSearchOrder(engine)) {
+      if (currentEngine === "duckduckgo") {
+        const rawResults = await fetchDdgHtmlResults(
+          domain ? `site:${normalizeDomainFilter(domain)} ${query}` : query,
+        );
+        const normalized = normalizeEngineResults(query, rawResults, currentEngine, domain, maxAgeMonths);
+        if (normalized.length === 0) {
+          attempts.push({ engine: currentEngine, status: "empty" });
+          continue;
+        }
+        attempts.push({ engine: currentEngine, status: "ok", count: normalized.length });
+        for (const result of normalized) {
+          merged.set(result.url, mergeSearchResults(merged.get(result.url), result));
+        }
+        const ranked = [...merged.values()].sort((a, b) => b.score - a.score);
+        if (engine !== "auto") return { results: ranked, attempts };
+        if (ranked.length >= maxResults) break;
+        continue;
+      }
+
       const page = await browserManager.openPage(ctxId);
       const searchUrl = buildWebSearchUrl(query, currentEngine, domain);
 

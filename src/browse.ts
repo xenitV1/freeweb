@@ -8,6 +8,7 @@ import { resolveLlmsRoute } from "./routing.js";
 import { checkDateFreshness } from "./dates.js";
 import { findLlmsTxt } from "./llms.js";
 import { findMarkdownVersion } from "./markdown.js";
+import { fetchWithChainSoft, type FetcherResult } from "./fetcher/chain.js";
 
 export async function withContext<T>(fn: (page: Page) => Promise<T>): Promise<T> {
   const ctxId = genContextId();
@@ -59,7 +60,9 @@ export interface BrowseResult {
   isSpa: boolean;
   llms: LlmsDocument | null;
   markdownUrl?: string;
-  contentSource: "html" | "markdown";
+  contentSource: "html" | "markdown" | "github-raw" | "http-jsdom" | "rss" | "archive-cache" | "playwright";
+  fetcherUsed?: string;
+  fetcherMs?: number;
   route: LlmsRouteDecision;
   links?: { text: string; href: string }[];
 }
@@ -81,6 +84,45 @@ export async function browseUrl(options: BrowseOptions): Promise<BrowseResult> {
   const llms = await findLlmsTxt(url);
   const route = resolveLlmsRoute(url, llms, query, followLlmsLinks);
   const activeUrl = route.targetUrl;
+
+  const chainResult = await fetchWithChainSoft(activeUrl, {
+    query,
+    maxContentLength,
+    maxAgeMonths,
+    extractLinks: shouldExtractLinks,
+    followLlmsLinks,
+    waitFor,
+    detectSpa,
+    staticTimeout,
+    spaTimeout,
+  });
+
+  if (chainResult && !chainResult.isSpa && chainResult.content.length > 200) {
+    let dateWarning = "";
+    let isFresh = true;
+    if (chainResult.date) {
+      const dateCheck = checkDateFreshness(chainResult.date, maxAgeMonths);
+      isFresh = dateCheck.isFresh;
+      dateWarning = dateCheck.warning;
+    }
+
+    return {
+      url,
+      finalUrl: chainResult.finalUrl,
+      title: chainResult.title,
+      content: chainResult.content,
+      date: chainResult.date,
+      dateWarning,
+      isFresh,
+      isSpa: false,
+      llms,
+      markdownUrl: chainResult.contentSource === "markdown" ? chainResult.finalUrl : undefined,
+      contentSource: chainResult.contentSource === "markdown" ? "markdown" as const : "html" as const,
+      route,
+      links: chainResult.links,
+    } satisfies BrowseResult;
+  }
+
   const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
 
   return withContext(async (page) => {

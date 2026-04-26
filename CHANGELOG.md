@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.0.0] - 2026-04-26
+
+### Added
+
+**Fetcher Chain — Multi-Layer Web Access**
+- 7 fetcher modules with priority-based fallback chain in `src/fetcher/`
+- `types.ts` — `Fetcher`, `FetcherResult`, `FetcherOptions` interfaces
+- `markdown.ts` (priority 5) — llms.txt + .md fallback (~300ms)
+- `github-raw.ts` (priority 10) — raw.githubusercontent.com direct access (~43ms)
+- `rss.ts` (priority 30) — RSS/Atom feed parser with auto-discovery (~450ms)
+- `http.ts` (priority 40) — Native `fetch()` + jsdom for static pages (~400ms)
+- `cache.ts` (priority 80) — Archive.org cached version fallback (~1.2s)
+- `playwright.ts` (priority 100) — Headless browser as last resort (~3-5s)
+- `chain.ts` — `fetchWithChain()` orchestrator: tries fetchers in priority order, first success wins
+
+**DuckDuckGo Fetch-Based Search**
+- `html.duckduckgo.com` search via native `fetch()` — no browser needed
+- `uddg=` URL parameter decoding for clean result URLs
+- DDG engine in `search.ts` now uses fetch instead of Playwright
+
+**Fetcher Chain Integration**
+- `browseUrl()` in `browse.ts` now tries `fetchWithChainSoft()` first
+- Lightweight fetchers (markdown, github-raw, http-jsdom) handle ~80% of pages without Playwright
+- Only SPA pages and heavy bot-protected sites fall back to Playwright
+
+**Tests**
+- 3 new test files: `chain.test.ts` (8), `github-raw.test.ts` (4), `http.test.ts` (4)
+- Total: 20 test files, 494 tests all passing
+- `fetcher-benchmark.mjs` — Live benchmark suite for all fetcher methods (31 tests)
+
+### Changed
+- `search.ts`: DuckDuckGo engine uses `fetch()` instead of Playwright browser
+- `browse.ts`: `browseUrl()` tries fetcher chain before opening Playwright context
+- jsdom moved to production dependency (used by http-fetcher at runtime)
+
 ## [2.0.0] - 2026-04-10
 
 ### Added
