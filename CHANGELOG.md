@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.0.2] - 2026-04-27
+
+### Fixed
+
+**Timeout & Performance Overhaul**
+- All `page.goto` calls changed from `waitUntil: "networkidle"` to `"domcontentloaded"` — eliminates 60s hangs on SPA-heavy sites
+- All page navigation timeouts reduced from 60s to 7s max — prevents MCP client timeouts
+- Fixed `github_search` timeout: sequential query variations with 60s+4s each now use 7s+smart selector wait
+- Fixed `web_search` timeout: engine page loads reduced from 60s to 7s, wait times halved
+- Fixed `deep_search`, `parallel_browse`, `get_page_links`, `screenshot`, `github_repo_files` timeouts
+- `browse_page` default `waitFor` changed from `"networkidle"` to `"domcontentloaded"`
+- Replaced blind `waitForTimeout()` waits with `waitForSelector()` where possible for faster content readiness
+- Default fetcher timeouts reduced: static 2.5s→1.5s, SPA 4s→3s, HTTP 8s→7s
+
 ## [3.0.1] - 2026-04-27
 
 ### Fixed

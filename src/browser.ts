@@ -360,7 +360,7 @@ class BrowserManager {
     if (url) {
       await this.randomDelay(500, 1500);
       await page
-        .goto(url, { waitUntil: "domcontentloaded", timeout: 45000 })
+        .goto(url, { waitUntil: "domcontentloaded", timeout: 7000 })
         .catch(() => null);
     }
     return page;

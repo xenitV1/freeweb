@@ -41,9 +41,9 @@ export const DEFAULT_FETCHER_OPTIONS: Required<FetcherOptions> = {
   followLlmsLinks: true,
   waitFor: "domcontentloaded",
   detectSpa: false,
-  staticTimeout: 2500,
-  spaTimeout: 4000,
-  timeout: 8000,
+  staticTimeout: 1500,
+  spaTimeout: 3000,
+  timeout: 7000,
 };
 
 export function truncateContent(text: string, maxLength: number): string {

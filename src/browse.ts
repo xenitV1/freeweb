@@ -73,9 +73,9 @@ export async function browseUrl(options: BrowseOptions): Promise<BrowseResult> {
     query,
     followLlmsLinks = true,
     waitFor = "domcontentloaded",
-    staticTimeout = 2500,
+    staticTimeout = 1500,
     detectSpa = false,
-    spaTimeout = 4000,
+    spaTimeout = 3000,
     extractLinks: shouldExtractLinks = false,
     maxContentLength = 15000,
     maxAgeMonths = 24,
@@ -128,7 +128,7 @@ export async function browseUrl(options: BrowseOptions): Promise<BrowseResult> {
   const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
 
   return withContext(async (page) => {
-    await page.goto(activeUrl, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
+    await page.goto(activeUrl, { waitUntil: waitFor, timeout: 7000 }).catch(() => {});
 
     let isSpa = false;
     if (detectSpa) {
@@ -238,17 +238,17 @@ export async function browseSearchResults(
       const page = await browserManager.openPage(ctxId);
 
       try {
-        await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+        await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
 
         const isSPA = await page.evaluate(() => {
           return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
         }).catch(() => false);
 
         if (isSPA) {
-          await page.waitForTimeout(4000);
-          await page.waitForSelector("main, article, .content, [role='main']", { timeout: 10000 }).catch(() => {});
+          await page.waitForTimeout(3000);
+          await page.waitForSelector("main, article, .content, [role='main']", { timeout: 5000 }).catch(() => {});
         } else {
-          await page.waitForTimeout(2500);
+          await page.waitForTimeout(1500);
         }
 
         const content = await extractContent(page);

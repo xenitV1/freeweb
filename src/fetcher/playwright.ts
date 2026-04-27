@@ -26,7 +26,7 @@ export const playwrightFetcher: Fetcher = {
     try {
       const page = await browserManager.openPage(ctxId);
 
-      await page.goto(url, { waitUntil: waitFor, timeout: 60000 }).catch(() => {});
+      await page.goto(url, { waitUntil: waitFor, timeout: 7000 }).catch(() => {});
 
       let isSpa = false;
       if (detectSpa) {

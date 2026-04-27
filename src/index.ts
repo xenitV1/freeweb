@@ -69,8 +69,9 @@ server.tool(
       if (results.length >= maxResults) break;
       const url = `https://github.com/search?q=${encodeURIComponent(q)}&type=${typeParam}${sortParam}`;
 
-      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(4000);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+      await page.waitForSelector('[data-testid="results-list"], .repo-list-item, .search-title, [data-testid="search-result-title"]', { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(2000);
 
       const batch = await page.evaluate(() => {
         const items: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
@@ -277,7 +278,7 @@ server.tool(
     url: z.string().url().describe("URL"),
     query: z.string().optional().describe("Optional intent so llms.txt can route to a more relevant page"),
     followLlmsLinks: z.boolean().optional().default(true),
-    waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("networkidle"),
+    waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("domcontentloaded"),
     warnIfOlderThanMonths: z.number().optional().default(24),
   },
   async ({ url, query, followLlmsLinks, waitFor, warnIfOlderThanMonths }) => {
@@ -420,8 +421,8 @@ server.tool(
         }
 
         const page = await browserManager.openPage(ctxId);
-        await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-        await page.waitForTimeout(3000);
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+        await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
 
         const content = await extractContent(page);
         const pageDate = await extractDate(page);
@@ -474,8 +475,8 @@ server.tool(
   async ({ owner, repo, path, branch }) => {
     const url = `https://github.com/${owner}/${repo}/tree/${branch}/${path}`;
     const files = await withContext(async (page) => {
-      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(3000);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+      await page.waitForSelector('[data-testid="directory-row"], .react-directory-row, .js-navigation-item, [role="row"]', { timeout: 5000 }).catch(() => {});
 
       return page.evaluate(() => {
         const items: { name: string; type: string }[] = [];
@@ -550,8 +551,8 @@ server.tool(
       }
 
       const page = await browserManager.openPage(ctxId);
-      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(2500);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+      await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
 
       const content = await extractContent(page);
       const pageDate = await extractDate(page);
@@ -602,8 +603,8 @@ server.tool(
       links = chainResult.links;
     } else {
       links = await withContext(async (page) => {
-        await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-        await page.waitForTimeout(2000);
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+        await page.waitForSelector("a[href]", { timeout: 5000 }).catch(() => {});
         return extractLinks(page);
       });
     }
@@ -630,8 +631,8 @@ server.tool(
     }
 
     const buffer = await withContext(async (page) => {
-      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(2500);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+      await page.waitForTimeout(1500);
       return page.screenshot({ fullPage, type: "png" });
     });
 

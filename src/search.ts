@@ -89,8 +89,8 @@ export async function collectWebSearchResults(
       const page = await browserManager.openPage(ctxId);
       const searchUrl = buildWebSearchUrl(query, currentEngine, domain);
 
-      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(currentEngine === "marginalia" ? 5000 : 3500);
+      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+      await page.waitForTimeout(currentEngine === "marginalia" ? 3000 : 2000);
 
       const blockedReason = await detectSearchBlock(page);
       if (blockedReason) {
