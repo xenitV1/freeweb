@@ -117,7 +117,9 @@ export async function browseUrl(options: BrowseOptions): Promise<BrowseResult> {
       isSpa: false,
       llms,
       markdownUrl: chainResult.contentSource === "markdown" ? chainResult.finalUrl : undefined,
-      contentSource: chainResult.contentSource === "markdown" ? "markdown" as const : "html" as const,
+      contentSource: chainResult.contentSource,
+      fetcherUsed: chainResult.fetcherName,
+      fetcherMs: chainResult.ms,
       route,
       links: chainResult.links,
     } satisfies BrowseResult;
@@ -201,6 +203,37 @@ export async function browseSearchResults(
       const llms = result.llms ?? await findLlmsTxt(result.url);
       const route = resolveLlmsRoute(result.url, llms, query, followLlmsLinks);
       const activeUrl = route.targetUrl;
+
+      const chainResult = await fetchWithChainSoft(activeUrl, {
+        query,
+        maxContentLength: excerptChars,
+        maxAgeMonths,
+        followLlmsLinks,
+      });
+
+      if (chainResult && !chainResult.isSpa && chainResult.content.length > 100) {
+        const pageDate = chainResult.date;
+        const freshnessWarning = pageDate ? checkDateFreshness(pageDate, maxAgeMonths).warning : result.freshnessWarning;
+
+        return {
+          ...result,
+          finalUrl: chainResult.finalUrl,
+          pageTitle: chainResult.title || result.title,
+          excerpt: chainResult.content.slice(0, excerptChars),
+          pageDate,
+          freshnessWarning,
+          browseError: undefined,
+          llms,
+          markdownUrl: chainResult.contentSource === "markdown" ? chainResult.finalUrl : undefined,
+          contentSource: chainResult.contentSource,
+          fetcherUsed: chainResult.fetcherName,
+          fetcherMs: chainResult.ms,
+          routedByLlms: route.routed,
+          routedFromUrl: route.routed ? route.requestUrl : undefined,
+          routedReason: route.reason,
+        } satisfies BrowsedSearchResult;
+      }
+
       const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
       const page = await browserManager.openPage(ctxId);
 

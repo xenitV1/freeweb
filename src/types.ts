@@ -37,7 +37,9 @@ export interface BrowsedSearchResult extends WebSearchResult {
   browseError?: string;
   llms?: LlmsDocument | null;
   markdownUrl?: string;
-  contentSource?: "html" | "markdown";
+  contentSource?: "html" | "markdown" | "github-raw" | "http-jsdom" | "rss" | "archive-cache" | "playwright";
+  fetcherUsed?: string;
+  fetcherMs?: number;
   routedByLlms?: boolean;
   routedFromUrl?: string;
   routedReason?: string;

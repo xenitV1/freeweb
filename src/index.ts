@@ -9,6 +9,7 @@ import { formatDateForDisplay } from "./dates.js";
 import { normalizeDomainFilter } from "./url.js";
 import { formatAttemptSummary } from "./scoring.js";
 import { browseUrl, browseSearchResults, withContext } from "./browse.js";
+import { fetchWithChainSoft } from "./fetcher/chain.js";
 import {
   collectWebSearchResults, formatWebSearchResults, enrichResultsWithLlms,
 } from "./search.js";
@@ -403,6 +404,21 @@ server.tool(
         const safety = isUrlSafe(url);
         if (!safety.safe) continue;
 
+        const chainResult = await fetchWithChainSoft(url, { maxContentLength: 1500, maxAgeMonths });
+
+        if (chainResult && !chainResult.isSpa && chainResult.content.length > 100) {
+          const dateCheck = checkDateFreshness(chainResult.date, maxAgeMonths);
+          results.push({
+            source,
+            title: chainResult.title || source,
+            url,
+            content: chainResult.content,
+            date: chainResult.date,
+            isFresh: dateCheck.isFresh,
+          });
+          continue;
+        }
+
         const page = await browserManager.openPage(ctxId);
         await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
         await page.waitForTimeout(3000);
@@ -519,6 +535,20 @@ server.tool(
     try {
 
     const tasks = safeUrls.map(async (url) => {
+      const chainResult = await fetchWithChainSoft(url, { maxContentLength: 4000 });
+
+      if (chainResult && !chainResult.isSpa && chainResult.content.length > 200) {
+        const dateCheck = checkDateFreshness(chainResult.date, 12);
+        let output = `## ${chainResult.title}\nURL: ${chainResult.finalUrl}`;
+        if (chainResult.date) {
+          output += `\n📅 ${new Date(chainResult.date).toLocaleDateString("en-US")}`;
+          if (!dateCheck.isFresh) output += " ⚠️ OLD";
+        }
+        output += `\nSource: ${chainResult.contentSource} (${chainResult.fetcherName}, ${chainResult.ms}ms)`;
+        output += `\n\n${chainResult.content}`;
+        return output;
+      }
+
       const page = await browserManager.openPage(ctxId);
       await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
       await page.waitForTimeout(2500);
@@ -565,11 +595,18 @@ server.tool(
       return { content: [{ type: "text" as const, text: `🔒 SECURITY: ${safety.reason}` }] };
     }
 
-    const links = await withContext(async (page) => {
-      await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
-      await page.waitForTimeout(2000);
-      return extractLinks(page);
-    });
+    const chainResult = await fetchWithChainSoft(url, { extractLinks: true, maxContentLength: 5000 });
+    let links: { text: string; href: string }[];
+
+    if (chainResult && chainResult.links && chainResult.links.length > 0) {
+      links = chainResult.links;
+    } else {
+      links = await withContext(async (page) => {
+        await page.goto(url, { waitUntil: "networkidle", timeout: 60000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        return extractLinks(page);
+      });
+    }
 
     const safeLinks = links.filter(l => isUrlSafe(l.href).safe);
     const formatted = safeLinks.slice(0, 100).map((l, i) => `[${i + 1}] ${l.text}\n    ${l.href}`).join("\n");

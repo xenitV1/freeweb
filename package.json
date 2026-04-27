@@ -1,6 +1,6 @@
 {
   "name": "freeweb-mcp",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Secure MCP server for web browsing with multi-layer fetcher chain - no API keys required",
   "keywords": [
     "mcp",

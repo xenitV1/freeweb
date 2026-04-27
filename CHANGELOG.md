@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.0.1] - 2026-04-27
+
+### Fixed
+
+**Fetcher Chain Full Integration**
+- `browseSearchResults()` now tries fetcher chain before Playwright for each URL (was bypassing chain entirely)
+- `parallel_browse` tool now tries fetcher chain first, falls back to Playwright
+- `get_page_links` tool now tries fetcher chain for link extraction, falls back to Playwright
+- `deep_search` tool now tries fetcher chain for content extraction from each source URL
+- `browseUrl()` contentSource mapping no longer collapses all sources to `"html"` — preserves `"github-raw"`, `"http-jsdom"`, `"rss"`, `"archive-cache"`, `"playwright"`
+- `fetcherMs` and `fetcherUsed` fields now populated from chain results (were defined but never set)
+- `BrowsedSearchResult.contentSource` type widened to include all `FetcherSource` values
+
 ## [3.0.0] - 2026-04-26
 
 ### Added
