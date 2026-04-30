@@ -6,51 +6,106 @@ import { detectSearchBlock } from "./browse.js";
 import { findLlmsTxt } from "./llms.js";
 import { browserManager } from "./browser.js";
 import { parseSearchResults, genContextId } from "./utils.js";
+import { parseYahooHtml, parseMarginaliaHtml, parseAskHtml, parseDdgHtml } from "./search-html.js";
+import type { RawSearchResult } from "./search-html.js";
 
-async function fetchDdgHtmlResults(query: string): Promise<{ title: string; url: string; snippet: string }[]> {
-  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+const CHROME_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+async function httpFetch(url: string, timeoutMs = 8000): Promise<string | null> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(searchUrl, {
+    const res = await fetch(url, {
       signal: ctrl.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      },
+      headers: { "User-Agent": CHROME_UA },
     });
     clearTimeout(timer);
-    if (!res.ok) return [];
-
-    const html = await res.text();
-    const decoded = html.replace(/&amp;/g, "&");
-
-    const results: { title: string; url: string; snippet: string }[] = [];
-    const linkMatches = [...decoded.matchAll(/class="result__a"[^>]*href="([^"]+)"/g)];
-    const snippetMatches = [...decoded.matchAll(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g)];
-    const titleMatches = [...decoded.matchAll(/class="result__a"[^>]*>([\s\S]*?)<\/a>/g)];
-
-    for (let i = 0; i < linkMatches.length; i++) {
-      const href = linkMatches[i][1];
-      const uddgMatch = href.match(/uddg=([^&]+)/);
-      const cleanUrl = uddgMatch ? decodeURIComponent(uddgMatch[1]) : href;
-      if (cleanUrl.includes("duckduckgo.com")) continue;
-
-      const rawTitle = titleMatches[i]?.[1] || "";
-      const rawSnippet = snippetMatches[i]?.[1] || "";
-      const strip = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-
-      results.push({
-        title: strip(rawTitle),
-        url: cleanUrl,
-        snippet: strip(rawSnippet),
-      });
-    }
-
-    return results;
+    if (!res.ok) return null;
+    return await res.text();
   } catch {
-    return [];
+    return null;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function fetchYahooHtmlResults(query: string): Promise<RawSearchResult[]> {
+  const searchUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
+  const html = await httpFetch(searchUrl);
+  if (!html) return [];
+  return parseYahooHtml(html);
+}
+
+async function fetchMarginaliaHtmlResults(query: string): Promise<RawSearchResult[]> {
+  const searchUrl = `https://search.marginalia.nu/search?query=${encodeURIComponent(query)}`;
+  const html = await httpFetch(searchUrl, 10000);
+  if (!html) return [];
+  return parseMarginaliaHtml(html);
+}
+
+async function fetchAskHtmlResults(query: string): Promise<RawSearchResult[]> {
+  const searchUrl = `https://www.ask.com/web?q=${encodeURIComponent(query)}`;
+  const html = await httpFetch(searchUrl);
+  if (!html) return [];
+  return parseAskHtml(html);
+}
+
+async function fetchDdgHtmlResults(query: string): Promise<RawSearchResult[]> {
+  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const html = await httpFetch(searchUrl);
+  if (!html) return [];
+  return parseDdgHtml(html);
+}
+
+type HtmlFetchFn = (query: string) => Promise<RawSearchResult[]>;
+
+const HTML_FETCHERS: Record<string, HtmlFetchFn> = {
+  yahoo: fetchYahooHtmlResults,
+  marginalia: fetchMarginaliaHtmlResults,
+  ask: fetchAskHtmlResults,
+  duckduckgo: fetchDdgHtmlResults,
+};
+
+function buildEffectiveQuery(query: string, domain?: string): string {
+  const normalizedDomain = normalizeDomainFilter(domain);
+  return normalizedDomain && !query.includes("site:") ? `site:${normalizedDomain} ${query}` : query;
+}
+
+function mergeAndRank(
+  merged: Map<string, WebSearchResult>,
+  normalized: WebSearchResult[],
+): WebSearchResult[] {
+  for (const result of normalized) {
+    merged.set(result.url, mergeSearchResults(merged.get(result.url), result));
+  }
+  return [...merged.values()].sort((a, b) => b.score - a.score);
+}
+
+async function tryEngineWithBrowser(
+  ctxId: string,
+  query: string,
+  currentEngine: string,
+  domain: string | undefined,
+  maxAgeMonths: number,
+): Promise<{ rawResults: { title: string; url: string; snippet: string }[]; blocked?: string }> {
+  try {
+    const page = await browserManager.openPage(ctxId);
+    const searchUrl = buildWebSearchUrl(query, currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", domain);
+
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+    await page.waitForTimeout(currentEngine === "marginalia" ? 3000 : 2000);
+
+    const blockedReason = await detectSearchBlock(page);
+    if (blockedReason) {
+      await page.close().catch(() => {});
+      return { rawResults: [], blocked: blockedReason };
+    }
+
+    const rawResults = await parseSearchResults(page);
+    await page.close().catch(() => {});
+    return { rawResults };
+  } catch {
+    return { rawResults: [], blocked: "Browser unavailable" };
   }
 }
 
@@ -61,65 +116,71 @@ export async function collectWebSearchResults(
   maxResults = 5,
   maxAgeMonths = 18,
 ): Promise<SearchCollection> {
-  const ctxId = genContextId();
   const attempts: SearchAttempt[] = [];
   const merged = new Map<string, WebSearchResult>();
+  const effectiveQuery = buildEffectiveQuery(query, domain);
 
+  let playwrightNeeded = false;
+
+  for (const currentEngine of getWebSearchOrder(engine)) {
+    const htmlFetcher = HTML_FETCHERS[currentEngine];
+    let rawResults: { title: string; url: string; snippet: string }[] = [];
+
+    if (htmlFetcher) {
+      rawResults = await htmlFetcher(effectiveQuery);
+    }
+
+    if (rawResults.length === 0) {
+      playwrightNeeded = true;
+      break;
+    }
+
+    const normalized = normalizeEngineResults(query, rawResults, currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", domain, maxAgeMonths);
+    if (normalized.length === 0) {
+      attempts.push({ engine: currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", status: "empty" });
+      continue;
+    }
+
+    attempts.push({ engine: currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", status: "ok", count: normalized.length });
+    const ranked = mergeAndRank(merged, normalized);
+    if (engine !== "auto") return { results: ranked, attempts };
+    if (ranked.length >= maxResults) return { results: ranked, attempts };
+  }
+
+  if (!playwrightNeeded) {
+    return { results: [...merged.values()].sort((a, b) => b.score - a.score), attempts };
+  }
+
+  const ctxId = genContextId();
   try {
+    const ranked = [...merged.values()].sort((a, b) => b.score - a.score);
+    if (ranked.length >= maxResults) return { results: ranked, attempts };
+
     for (const currentEngine of getWebSearchOrder(engine)) {
-      if (currentEngine === "duckduckgo") {
-        const rawResults = await fetchDdgHtmlResults(
-          domain ? `site:${normalizeDomainFilter(domain)} ${query}` : query,
-        );
-        const normalized = normalizeEngineResults(query, rawResults, currentEngine, domain, maxAgeMonths);
-        if (normalized.length === 0) {
-          attempts.push({ engine: currentEngine, status: "empty" });
-          continue;
-        }
-        attempts.push({ engine: currentEngine, status: "ok", count: normalized.length });
-        for (const result of normalized) {
-          merged.set(result.url, mergeSearchResults(merged.get(result.url), result));
-        }
-        const ranked = [...merged.values()].sort((a, b) => b.score - a.score);
-        if (engine !== "auto") return { results: ranked, attempts };
-        if (ranked.length >= maxResults) break;
+      const alreadyOk = attempts.find((a) => a.engine === currentEngine && a.status === "ok");
+      if (alreadyOk) continue;
+
+      const { rawResults, blocked } = await tryEngineWithBrowser(
+        ctxId, query, currentEngine, domain, maxAgeMonths,
+      );
+
+      if (blocked) {
+        attempts.push({ engine: currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", status: "blocked", reason: blocked });
         continue;
       }
 
-      const page = await browserManager.openPage(ctxId);
-      const searchUrl = buildWebSearchUrl(query, currentEngine, domain);
-
-      await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
-      await page.waitForTimeout(currentEngine === "marginalia" ? 3000 : 2000);
-
-      const blockedReason = await detectSearchBlock(page);
-      if (blockedReason) {
-        attempts.push({ engine: currentEngine, status: "blocked", reason: blockedReason });
-        await page.close().catch(() => {});
-        continue;
-      }
-
-      const rawResults = await parseSearchResults(page);
-      await page.close().catch(() => {});
-
-      const normalized = normalizeEngineResults(query, rawResults, currentEngine, domain, maxAgeMonths);
+      const normalized = normalizeEngineResults(query, rawResults, currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", domain, maxAgeMonths);
       if (normalized.length === 0) {
-        attempts.push({ engine: currentEngine, status: "empty" });
+        attempts.push({ engine: currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", status: "empty" });
         continue;
       }
 
-      attempts.push({ engine: currentEngine, status: "ok", count: normalized.length });
-      for (const result of normalized) {
-        merged.set(result.url, mergeSearchResults(merged.get(result.url), result));
-      }
+      attempts.push({ engine: currentEngine as "yahoo" | "marginalia" | "ask" | "duckduckgo", status: "ok", count: normalized.length });
+      const updated = mergeAndRank(merged, normalized);
 
-      const ranked = [...merged.values()].sort((a, b) => b.score - a.score);
-      if (engine !== "auto") {
-        return { results: ranked, attempts };
-      }
-
-      if (currentEngine === "yahoo" && ranked.length >= maxResults + 2) break;
-      if (currentEngine === "marginalia" && ranked.length >= maxResults) break;
+      if (engine !== "auto") return { results: updated, attempts };
+      if (currentEngine === "yahoo" && updated.length >= maxResults + 2) break;
+      if (updated.length >= maxResults) break;
     }
 
     return { results: [...merged.values()].sort((a, b) => b.score - a.score), attempts };

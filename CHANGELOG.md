@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.0.3] - 2026-04-30
+
+### Added
+
+**HTTP-First Search — Reduce Playwright Dependency**
+- `src/search-html.ts` — Standalone HTML parsers for Yahoo, Marginalia, Ask.com, DuckDuckGo search results (no browser needed)
+- `parseYahooHtml()` — Extracts results from Yahoo search HTML with redirect URL unwrapping and broad link fallback
+- `parseMarginaliaHtml()` — Extracts results from Marginalia search HTML with snippet extraction from card layout
+- `parseAskHtml()` — Extracts results from Ask.com search HTML with internal URL filtering
+- `parseDdgHtml()` — Refactored from inline regex to shared parser in `search-html.ts`
+- `collectWebSearchResults()` now tries HTTP fetch for ALL engines first, only falls back to Playwright when HTTP fails
+- `tryEngineWithBrowser()` — Extracted browser fallback into standalone function with error handling (graceful degradation when browser unavailable)
+
+### Changed
+- Search flow: HTTP fetch → results found → return (no Playwright) | HTTP fails → Playwright fallback
+- `search.ts` inline parsers moved to `search-html.ts` for testability
+- `tryEngineWithBrowser()` wraps browser operations in try/catch — no more unhandled crashes when browser is unavailable
+- Shared `httpFetch()` helper with timeout and Chrome UA for all engine HTTP requests
+- Shared `stripHtml()` utility replacing duplicated regex in each parser
+
+### Tests
+- `tests/unit/search-html.test.ts` — 19 tests: unit tests for all 4 HTML parsers (Yahoo, Marginalia, Ask, DDG)
+- `tests/unit/search-http.test.ts` — 11 tests: HTTP-first flow, mock fetch, domain filter, format, enrichment
+- Total: 22 test files, 524 tests all passing
+
 ## [3.0.2] - 2026-04-27
 
 ### Fixed
