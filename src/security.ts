@@ -9,7 +9,13 @@ const BLOCKED_DOWNLOAD_EXTENSIONS = [
   ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt",
 ];
 
+import { CONTENT_SAFETY_NOTICE } from "./constants.js";
+
 export { BLOCKED_DOMAINS, BLOCKED_DOWNLOAD_EXTENSIONS };
+
+export function tagExternalContent(text: string): string {
+  return `${CONTENT_SAFETY_NOTICE}\n\n<external-content>\n${text}\n</external-content>`;
+}
 
 export function isUrlSafe(url: string): { safe: boolean; reason?: string } {
   try {

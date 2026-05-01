@@ -1,7 +1,6 @@
-export { BLOCKED_DOMAINS, BLOCKED_DOWNLOAD_EXTENSIONS } from "./security.js";
-export { isUrlSafe, checkDownloadRequest } from "./security.js";
+export { BLOCKED_DOMAINS, BLOCKED_DOWNLOAD_EXTENSIONS, isUrlSafe, checkDownloadRequest, tagExternalContent } from "./security.js";
 
-export { RESEARCH_POLICY, TRUSTED_DOMAINS, LOW_QUALITY_DOMAINS, QUERY_STOP_WORDS, WEB_SEARCH_ENGINES } from "./constants.js";
+export { RESEARCH_POLICY, CONTENT_SAFETY_NOTICE, TRUSTED_DOMAINS, LOW_QUALITY_DOMAINS, QUERY_STOP_WORDS, WEB_SEARCH_ENGINES } from "./constants.js";
 
 export type { WebSearchEngine, WebSearchMode, SearchAttemptStatus, SearchAttempt, WebSearchResult, BrowsedSearchResult, LlmsRouteDecision, RateLimitConfig, RequestContext } from "./types.js";
 

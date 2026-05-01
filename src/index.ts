@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { RESEARCH_POLICY } from "./constants.js";
 import type { WebSearchResult } from "./types.js";
-import { isUrlSafe, checkDownloadRequest } from "./security.js";
+import { isUrlSafe, checkDownloadRequest, tagExternalContent } from "./security.js";
 import { formatDateForDisplay } from "./dates.js";
 import { normalizeDomainFilter } from "./url.js";
 import { formatAttemptSummary } from "./scoring.js";
@@ -265,7 +265,7 @@ server.tool(
     }).join("\n\n---\n\n");
 
     return {
-      content: [{ type: "text" as const, text: `${searchSummary}\n\n---\n\n# Search & Browse\nBrowsed ${browsed.length} result(s).\n\n${detailSections}` }],
+      content: [{ type: "text" as const, text: tagExternalContent(`${searchSummary}\n\n---\n\n# Search & Browse\nBrowsed ${browsed.length} result(s).\n\n${detailSections}`) }],
     };
   }
 );
@@ -312,7 +312,7 @@ server.tool(
       ? `${formatLlmsGuidance(result.llms, { headingLevel: 2, maxSections: 3, maxNotesPerSection: 2, maxLinksPerSection: 3, query, maxRelevantLinks: 3 })}\n\n---\n\n`
       : "";
 
-    return { content: [{ type: "text" as const, text: `# ${result.title}\n\nURL: ${result.finalUrl}${routeInfo}${dateInfo}${contentSourceInfo}${dateWarning}\n\n${llmsSection}${result.content}` }] };
+    return { content: [{ type: "text" as const, text: tagExternalContent(`# ${result.title}\n\nURL: ${result.finalUrl}${routeInfo}${dateInfo}${contentSourceInfo}${dateWarning}\n\n${llmsSection}${result.content}`) }] };
   }
 );
 
@@ -372,7 +372,7 @@ server.tool(
       output += result.links.slice(0, 15).map((l) => `- [${l.text}](${l.href})`).join("\n");
     }
 
-    return { content: [{ type: "text" as const, text: output }] };
+    return { content: [{ type: "text" as const, text: tagExternalContent(output) }] };
   }
 );
 
@@ -458,7 +458,7 @@ server.tool(
       return line;
     }).join("\n\n");
 
-    return { content: [{ type: "text" as const, text: `# Deep Search: "${query}"\n${freshResults.length}/${results.length} sources fresh\n\n${formatted}` }] };
+    return { content: [{ type: "text" as const, text: tagExternalContent(`# Deep Search: "${query}"\n${freshResults.length}/${results.length} sources fresh\n\n${formatted}`) }] };
   }
 );
 
@@ -579,7 +579,7 @@ server.tool(
       output += `\n\n---\n\n🔒 Blocked: ${blockedUrls.join(", ")}`;
     }
 
-    return { content: [{ type: "text" as const, text: output }] };
+    return { content: [{ type: "text" as const, text: tagExternalContent(output) }] };
   }
 );
 
