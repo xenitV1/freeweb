@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [3.1.0] - 2026-05-01
+
+### Added
+
+**Indirect Prompt Injection Protection**
+- `tagExternalContent()` in `security.ts` — wraps all external web content in `<external-content>` XML tags with a safety notice before returning to the LLM
+- `CONTENT_SAFETY_NOTICE` constant in `constants.ts` — explicit warning instructing the LLM to treat fetched content as data, not instructions; lists common injection patterns to ignore
+- Applied to 5 content-returning tools: `search_and_browse`, `browse_page`, `smart_browse`, `deep_search`, `parallel_browse`
+- Exported via `lib.ts` for library consumers
+
+### Tests
+- `tests/unit/content-safety.test.ts` — 12 tests: notice content validation, tag wrapping structure, edge cases (empty string, XML chars, multiline, idempotency, exact content preservation)
+
 ## [3.0.3] - 2026-04-30
 
 ### Added
