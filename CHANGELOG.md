@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The format is based on [Keep a Changelog](https://keepalivechangelog.com/en/1.0.0/).
+
+## [3.1.1] - 2026-05-03
+
+### Changed
+
+- Updated `playwright` dependency from `^1.52.0` to `^1.59.1` to match system-installed Playwright browser binaries (chromium-1217, firefox-1511, webkit-2272). Previously FreeWeb required `chromium_headless_shell-1208` which was not installed, causing "Failed to launch chromium browser" errors.
 
 ## [3.1.0] - 2026-05-01
 
