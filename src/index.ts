@@ -643,3 +643,12 @@ server.tool(
 // ── SERVER START ──────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// ── GRACEFUL SHUTDOWN ──────────────────────────────────────────────
+async function gracefulShutdown(signal: string) {
+  await browserManager.close().catch(() => {});
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

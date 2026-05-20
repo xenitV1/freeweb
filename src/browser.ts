@@ -128,6 +128,11 @@ class BrowserManager {
 
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
+  constructor() {
+    const timer = setInterval(() => this.cleanupIdleEngines(), 60_000);
+    timer.unref();
+  }
+
   private getEnabledEngines(): EngineType[] {
     const envVal = process.env.FREEWEB_ENGINES;
     if (!envVal) return ["chromium", "firefox", "webkit"];

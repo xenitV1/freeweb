@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepalivechangelog.com/en/1.0.0/).
 
+## [3.1.2] - 2026-05-20
+
+### Added
+
+- Periodic idle engine cleanup timer in `BrowserManager` constructor (runs every 60s, `unref`'d to avoid blocking process exit)
+- Graceful shutdown handlers for `SIGTERM` and `SIGINT` signals — closes all browser engines before exit
+
 ## [3.1.1] - 2026-05-03
 
 ### Changed
