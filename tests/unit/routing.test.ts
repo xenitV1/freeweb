@@ -54,10 +54,10 @@ describe("resolveLlmsRoute", () => {
     expect(result.targetUrl).toContain("example.com");
   });
 
-  it("BUG: guide.md gets higher score than api due to .md extension bonus", () => {
+  it("api wins over guide.md for api query (stop-word fix prevents .md bonus abuse)", () => {
     const result = resolveLlmsRoute("https://example.com/", makeDoc(), "api reference endpoints");
     if (result.routed) {
-      expect(result.targetUrl).toContain("guide");
+      expect(result.targetUrl).toContain("api");
     }
   });
 

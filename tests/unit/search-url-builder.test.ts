@@ -33,7 +33,7 @@ describe("buildWebSearchUrl", () => {
   describe("Marginalia URLs", () => {
     it("builds Marginalia URL with query", () => {
       const url = buildWebSearchUrl("react hooks", "marginalia");
-      expect(url).toBe("https://search.marginalia.nu/search?query=react+hooks");
+      expect(url).toBe("https://marginalia-search.com/search?query=react+hooks");
     });
 
     it("builds Marginalia URL with domain filter", () => {

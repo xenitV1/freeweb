@@ -87,12 +87,12 @@ describe("parseMarginaliaHtml", () => {
   it("extracts results from Marginalia search HTML", () => {
     const html = `
       <div class="flex flex-col grow">
-        <h2 class="text-lg font-semibold"><a href="https://react.dev/learn">React Documentation</a></h2>
-        <p class="mt-2 text-sm text-gray-600">React is a JavaScript library for building user interfaces</p>
+        <a class="text-liteblue dark:text-blue-200 underline break-all" href="https://react.dev/learn">React Documentation</a>
+        <p class="mt-2 text-sm text-black dark:text-white leading-relaxed break-words">React is a JavaScript library for building user interfaces</p>
       </div>
       <div class="flex flex-col grow">
-        <h2 class="text-lg font-semibold"><a href="https://vuejs.org/guide">Vue.js Guide</a></h2>
-        <p class="mt-2 text-sm text-gray-600">Vue is a progressive framework</p>
+        <a class="text-liteblue dark:text-blue-200 underline break-all" href="https://vuejs.org/guide">Vue.js Guide</a>
+        <p class="mt-2 text-sm text-black dark:text-white leading-relaxed break-words">Vue is a progressive framework</p>
       </div>
     `;
     const results = parseMarginaliaHtml(html);
@@ -102,16 +102,26 @@ describe("parseMarginaliaHtml", () => {
     expect(results[0].snippet).toContain("JavaScript library");
   });
 
-  it("extracts snippets from generic <p> tags", () => {
+  it("uses URL as title when link text is empty", () => {
     const html = `
-      <div>
-        <h2><a href="https://example.com">Example Page</a></h2>
-        <p>This is the description of the page content.</p>
-      </div>
+      <a class="text-liteblue underline break-all" href="https://example.com/page"></a>
+      <p class="mt-2 text-sm text-black">Some description text here</p>
     `;
     const results = parseMarginaliaHtml(html);
     expect(results).toHaveLength(1);
+    expect(results[0].url).toBe("https://example.com/page");
     expect(results[0].snippet).toContain("description");
+  });
+
+  it("filters out marginalia internal links", () => {
+    const html = `
+      <a class="text-liteblue underline break-all" href="https://marginalia-search.com/about">About</a>
+      <a class="text-liteblue underline break-all" href="https://chat.marginalia.nu">Chat</a>
+      <a class="text-liteblue underline break-all" href="https://example.com/real">Real Result</a>
+    `;
+    const results = parseMarginaliaHtml(html);
+    expect(results).toHaveLength(1);
+    expect(results[0].url).toBe("https://example.com/real");
   });
 
   it("returns empty for non-Marginalia HTML", () => {

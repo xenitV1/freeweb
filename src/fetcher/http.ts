@@ -8,6 +8,43 @@ const require = createRequire(import.meta.url);
 const cache = new LRUCache<FetcherResult>(300, 20 * 60 * 1000);
 const inflight = new InflightMap<FetcherResult | null>();
 
+function normalizeText(text: string): string {
+  return text
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join("\n")
+    .trim();
+}
+
+function stripNoiseNodes(el: Element, doc: Document): void {
+  const removeSelectors = [
+    "script", "style", "noscript", "svg", "iframe",
+    "nav", "header", "footer", "aside",
+    '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+    ".nav", ".navbar", ".sidebar", ".toc", ".breadcrumb", ".menu",
+    ".header", ".footer", ".breadcrumbs",
+    ".alert", ".notification", ".toast", ".banner",
+    ".search", ".searchbar", ".cookie", ".gdpr",
+    ".ad", ".ads", ".advertisement",
+    ".edit", ".feedback", ".contributors",
+    ".prev-next", ".pagination",
+    "[aria-hidden='true']", ".sr-only", ".visually-hidden",
+    "button", ".btn", ".button", ".copy", ".copy-button",
+    ".code-example .example-header", ".example-header",
+    ".toolbar", ".code-toolbar", ".language-label",
+    ".on-this-page", ".table-of-contents", ".toc-tree",
+    ".metadata", ".page-metadata", ".article-meta",
+    ".related", ".seealso", ".see-also",
+  ];
+  for (const sel of removeSelectors) {
+    el.querySelectorAll(sel).forEach((n) => n.remove());
+  }
+}
+
 function extractMainContent(html: string): { title: string; text: string; selector: string } | null {
   try {
     const jsdom = require("jsdom");
@@ -25,14 +62,21 @@ function extractMainContent(html: string): { title: string; text: string; select
 
     for (const sel of selectors) {
       const el = doc.querySelector(sel);
-      if (el && el.textContent.trim().length > 100) {
-        return { title, text: el.textContent.trim(), selector: sel };
+      if (el) {
+        stripNoiseNodes(el, doc);
+        const text = normalizeText(el.textContent || "");
+        if (text.length > 100) {
+          return { title, text, selector: sel };
+        }
       }
     }
 
-    const bodyText = doc.body?.textContent?.trim();
-    if (bodyText && bodyText.length > 100) {
-      return { title, text: bodyText, selector: "body" };
+    if (doc.body) {
+      stripNoiseNodes(doc.body, doc);
+      const bodyText = normalizeText(doc.body.textContent || "");
+      if (bodyText.length > 100) {
+        return { title, text: bodyText, selector: "body" };
+      }
     }
   } catch {}
   return null;

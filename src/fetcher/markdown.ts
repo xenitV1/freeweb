@@ -7,8 +7,8 @@ export const markdownFetcher: Fetcher = {
   name: "markdown",
   priority: 5,
 
-  canHandle(_url: string): boolean {
-    return true;
+  canHandle(_url: string, opts?: FetcherOptions): boolean {
+    return opts?.followLlmsLinks !== false;
   },
 
   async fetch(url: string, opts?: FetcherOptions): Promise<FetcherResult | null> {

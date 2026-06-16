@@ -47,5 +47,19 @@ export const DEFAULT_FETCHER_OPTIONS: Required<FetcherOptions> = {
 };
 
 export function truncateContent(text: string, maxLength: number): string {
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
+  if (text.length <= maxLength) return text;
+
+  let truncated = text.slice(0, maxLength);
+
+  const lastPara = truncated.lastIndexOf("\n\n");
+  if (lastPara > maxLength * 0.7) {
+    truncated = truncated.slice(0, lastPara);
+  } else {
+    const lastSpace = truncated.lastIndexOf(" ");
+    if (lastSpace > maxLength * 0.8) {
+      truncated = truncated.slice(0, lastSpace);
+    }
+  }
+
+  return truncated.trimEnd() + "\n\n[… truncated]";
 }

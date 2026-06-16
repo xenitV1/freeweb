@@ -16,7 +16,7 @@ function makeResult(name: string): FetcherResult {
     url: "https://example.com",
     finalUrl: "https://example.com",
     title: `Result from ${name}`,
-    content: "Test content that is long enough to pass checks",
+    content: "Test content that is long enough to pass the quality threshold used by the fetcher chain. ".repeat(15),
     isSpa: false,
     contentSource: "http-jsdom",
     fetcherName: name,
@@ -65,6 +65,51 @@ describe("fetchWithChain", () => {
 
     expect(result.fetcherName).toBe("yes");
     expect(cannotHandle.fetch).not.toHaveBeenCalled();
+  });
+
+  it("falls through to next fetcher when content is too short", async () => {
+    const short: FetcherResult = { ...makeResult("short"), content: "tiny" };
+    const shortFetcher = makeFetcher("short", 10, short);
+    const good = makeFetcher("good", 50, makeResult("good"));
+
+    const result = await fetchWithChain("https://example.com", undefined, [shortFetcher, good]);
+
+    expect(result.fetcherName).toBe("good");
+    expect(good.fetch).toHaveBeenCalled();
+  });
+
+  it("falls through when SPA result is below SPA threshold", async () => {
+    const spaShort: FetcherResult = { ...makeResult("spaShort"), content: "x".repeat(1000), isSpa: true };
+    const spaFetcher = makeFetcher("spaShort", 10, spaShort);
+    const browser = makeFetcher("browser", 100, makeResult("browser"));
+
+    const result = await fetchWithChain("https://example.com", undefined, [spaFetcher, browser]);
+
+    expect(result.fetcherName).toBe("browser");
+    expect(browser.fetch).toHaveBeenCalled();
+  });
+
+  it("keeps SPA result when long enough", async () => {
+    const spaGood: FetcherResult = { ...makeResult("spaGood"), content: "x".repeat(4000), isSpa: true };
+    const spaFetcher = makeFetcher("spaGood", 40, spaGood);
+    const browser = makeFetcher("browser", 100, makeResult("browser"));
+
+    const result = await fetchWithChain("https://example.com", undefined, [spaFetcher, browser]);
+
+    expect(result.fetcherName).toBe("spaGood");
+    expect(browser.fetch).not.toHaveBeenCalled();
+  });
+
+  it("returns best short result as fallback when no high-quality result exists", async () => {
+    const medium: FetcherResult = { ...makeResult("medium"), content: "x".repeat(500), isSpa: true };
+    const tiny: FetcherResult = { ...makeResult("tiny"), content: "x".repeat(50), isSpa: true };
+    const mediumFetcher = makeFetcher("medium", 40, medium);
+    const tinyFetcher = makeFetcher("tiny", 50, tiny);
+    const lastFails = makeFetcher("last", 100, null);
+
+    const result = await fetchWithChain("https://example.com", undefined, [mediumFetcher, tinyFetcher, lastFails]);
+
+    expect(result.fetcherName).toBe("medium");
   });
 
   it("throws if all fetchers fail", async () => {

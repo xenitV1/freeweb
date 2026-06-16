@@ -47,20 +47,26 @@ export function parseYahooHtml(html: string): RawSearchResult[] {
 
 export function parseMarginaliaHtml(html: string): RawSearchResult[] {
   const results: RawSearchResult[] = [];
-  const cardMatches = [...html.matchAll(/<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h2>/gi)];
+  const seen = new Set<string>();
 
-  for (const m of cardMatches) {
-    const url = m[1];
-    const title = stripHtml(m[2]);
-    if (!title || !url) continue;
+  const linkMatches = [...html.matchAll(/<a[^>]*class="[^"]*text-liteblue[^"]*"[^>]*href="(https?:\/\/(?!marginalia-search\.com|chat\.marginalia)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)];
+
+  for (const m of linkMatches) {
+    const url = m[1].replace(/&shy;/g, "");
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    const rawTitle = m[2].replace(/&shy;/g, "").replace(/<[^>]+>/g, "").trim();
+    const title = rawTitle || url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
     const cardStart = m.index ?? 0;
-    const afterCard = html.slice(cardStart, cardStart + 2000);
-    const snippetMatch = afterCard.match(/<p[^>]*class="[^"]*mt-2[^"]*"[^>]*>([\s\S]*?)<\/p>/i)
+    const afterCard = html.slice(cardStart, cardStart + 1500);
+    const snippetMatch = afterCard.match(/<(?:p|div)[^>]*class="[^"]*mt-2 text-sm text-black[^"]*"[^>]*>([\s\S]*?)<\/(?:p|div)>/i)
       || afterCard.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
     const snippet = snippetMatch ? stripHtml(snippetMatch[1]) : "";
 
     results.push({ title, url, snippet });
+    if (results.length >= 20) break;
   }
 
   return results;

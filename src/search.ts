@@ -30,29 +30,25 @@ async function httpFetch(url: string, timeoutMs = 8000): Promise<string | null> 
 }
 
 async function fetchYahooHtmlResults(query: string): Promise<RawSearchResult[]> {
-  const searchUrl = `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`;
-  const html = await httpFetch(searchUrl);
+  const html = await httpFetch(buildWebSearchUrl(query, "yahoo"));
   if (!html) return [];
   return parseYahooHtml(html);
 }
 
 async function fetchMarginaliaHtmlResults(query: string): Promise<RawSearchResult[]> {
-  const searchUrl = `https://search.marginalia.nu/search?query=${encodeURIComponent(query)}`;
-  const html = await httpFetch(searchUrl, 10000);
+  const html = await httpFetch(buildWebSearchUrl(query, "marginalia"), 10000);
   if (!html) return [];
   return parseMarginaliaHtml(html);
 }
 
 async function fetchAskHtmlResults(query: string): Promise<RawSearchResult[]> {
-  const searchUrl = `https://www.ask.com/web?q=${encodeURIComponent(query)}`;
-  const html = await httpFetch(searchUrl);
+  const html = await httpFetch(buildWebSearchUrl(query, "ask"));
   if (!html) return [];
   return parseAskHtml(html);
 }
 
 async function fetchDdgHtmlResults(query: string): Promise<RawSearchResult[]> {
-  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const html = await httpFetch(searchUrl);
+  const html = await httpFetch(buildWebSearchUrl(query, "duckduckgo"));
   if (!html) return [];
   return parseDdgHtml(html);
 }

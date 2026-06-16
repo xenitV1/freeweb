@@ -26,37 +26,16 @@ export interface LlmsRelevantLink extends LlmsLink {
 }
 
 import { LRUCache, InflightMap } from "./cache.js";
+import { cleanText, stripMarkdown, buildQueryTokens, countQueryHits } from "./text.js";
 
 const MAX_LLMS_BYTES = 60_000;
 const FETCH_TIMEOUT_MS = 3_500;
 const llmsCache = new LRUCache<LlmsDocument>(500, 30 * 60 * 1000);
 const llmsInflight = new InflightMap<LlmsDocument | null>();
 const llmsTargetCache = new LRUCache<LlmsDocument>(500, 30 * 60 * 1000);
-const QUERY_STOP_WORDS = new Set([
-  "a", "an", "and", "api", "are", "as", "at", "be", "best", "by", "docs", "documentation", "for",
-  "from", "guide", "how", "in", "into", "is", "it", "of", "on", "or", "reference", "site",
-  "the", "this", "to", "what", "with",
-]);
 
 function unique<T>(items: T[]): T[] {
   return Array.from(new Set(items));
-}
-
-function cleanText(text: string): string {
-  return text
-    .replace(/[\u00ad\u200b-\u200f\u2060\ufeff]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function stripMarkdown(text: string): string {
-  return cleanText(
-    text
-      .replace(/\*\*([^*]+)\*\*/g, "$1")
-      .replace(/__([^_]+)__/g, "$1")
-      .replace(/`([^`]+)`/g, "$1")
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-  );
 }
 
 function getHeadingText(line: string, level: number): string | undefined {
@@ -84,21 +63,6 @@ function normalizeTargetUrl(targetUrl: string): string {
   const parsed = new URL(targetUrl);
   parsed.hash = "";
   return parsed.toString();
-}
-
-function buildQueryTokens(query: string): string[] {
-  return Array.from(new Set(
-    query
-      .toLowerCase()
-      .split(/[^a-z0-9.#+-]+/i)
-      .map((token) => token.trim())
-      .filter((token) => token.length > 1 && !QUERY_STOP_WORDS.has(token))
-  ));
-}
-
-function countTokenHits(text: string, tokens: string[]): number {
-  const haystack = cleanText(text).toLowerCase();
-  return tokens.reduce((count, token) => count + (haystack.includes(token) ? 1 : 0), 0);
 }
 
 function parseListLine(content: string, sourceUrl: string): { link?: LlmsLink; note?: string } {
@@ -412,10 +376,10 @@ export function findRelevantLlmsLinks(
   if (tokens.length === 0) return [];
 
   const scored = doc.sections.flatMap((section) => section.links.map((link) => {
-    const titleHits = countTokenHits(link.title, tokens);
-    const noteHits = countTokenHits(link.note || "", tokens);
-    const sectionHits = countTokenHits(section.title, tokens);
-    const urlHits = countTokenHits(link.url, tokens);
+    const titleHits = countQueryHits(cleanText(link.title), tokens);
+    const noteHits = countQueryHits(cleanText(link.note || ""), tokens);
+    const sectionHits = countQueryHits(cleanText(section.title), tokens);
+    const urlHits = countQueryHits(cleanText(link.url), tokens);
 
     let score = section.optional ? 1 : 6;
     score += titleHits * 7;

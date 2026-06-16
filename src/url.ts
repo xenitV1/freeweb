@@ -32,7 +32,7 @@ export function buildWebSearchUrl(query: string, engine: WebSearchEngine, domain
       return url.toString();
     }
     case "marginalia": {
-      const url = new URL("https://search.marginalia.nu/search");
+      const url = new URL("https://marginalia-search.com/search");
       url.searchParams.set("query", effectiveQuery);
       return url.toString();
     }
@@ -59,6 +59,11 @@ export function normalizeSearchResultUrl(rawUrl: string): string {
       if (target) return decodeURIComponent(target);
     }
 
+    if (hostname.endsWith("search.yahoo.com") && parsed.pathname === "/search") {
+      const target = parsed.searchParams.get("RU");
+      if (target) return decodeURIComponent(target);
+    }
+
     if (hostname.includes("google.") && parsed.pathname === "/url") {
       const target = parsed.searchParams.get("q");
       if (target) return target;
@@ -78,7 +83,18 @@ export function normalizeSearchResultUrl(rawUrl: string): string {
     });
     cleaned.hash = "";
 
-    return cleaned.toString();
+    const cleanedStr = cleaned.toString();
+
+    const rkPath = cleanedStr.match(/^(.*?)(\/RK=[^/?#]*(?:\/[^/?#]+)*\/RS=[^/?#]*)([?#].*)?$/i);
+    if (rkPath) {
+      return (rkPath[1] + (rkPath[3] || "")).replace(/\/+$/, "") || rkPath[1];
+    }
+    const loneRk = cleanedStr.match(/^(.*?)(\/(?:RK|RS)=[^/?#]*)([?#].*)?$/i);
+    if (loneRk) {
+      return (loneRk[1] + (loneRk[3] || "")).replace(/\/+$/, "") || loneRk[1];
+    }
+
+    return cleanedStr;
   } catch {
     return rawUrl;
   }
@@ -130,6 +146,7 @@ export function isInternalSearchEngineUrl(url: string): boolean {
     if (hostname === "search.yahoo.com" && pathname === "/search") return true;
     if ((hostname === "www.ask.com" || hostname === "ask.com") && pathname.startsWith("/web")) return true;
     if ((hostname === "search.marginalia.nu" || hostname === "marginalia-search.com") && pathname.startsWith("/search")) return true;
+    if (hostname.endsWith("duckduckgo.com") && (pathname === "/html" || pathname.startsWith("/l/"))) return true;
     return false;
   } catch {
     return true;

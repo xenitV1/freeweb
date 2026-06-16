@@ -4,6 +4,66 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepalivechangelog.com/en/1.0.0/).
 
+## [3.2.0] - 2026-06-16
+
+### Added
+
+**DuckDuckGo search engine exposed**
+- `duckduckgo` now selectable via the `engine` parameter in `web_search` and `search_and_browse` (previously implemented but hidden from the tool schema)
+- `auto` engine order updated to `[yahoo, duckduckgo, marginalia, ask]` — DuckDuckGo is now the primary fallback before Marginalia
+
+**MCP tool annotations**
+- All 11 tools now expose `readOnlyHint: true` and `openWorldHint: true` annotations per MCP best practices, so clients (Claude Desktop, Cursor) can treat them as safe read-only operations
+
+**Fetcher chain quality threshold**
+- New automatic quality gate in `fetchWithChain`: a fetcher result is treated as low quality (and the chain falls through to the next fetcher) when content is below 800 chars, or when an SPA-flagged result is below 3200 chars
+- `bestSoFar` fallback: if every fetcher returns low-quality content, the longest result is returned rather than failing
+- Fixes a critical bug where `http-jsdom` would win on SPA sites (e.g. Twitter) with only ~400 chars of stub content, never falling back to Playwright
+
+**4 new chain tests**
+- Quality-threshold fallthrough, SPA threshold, long-SPA acceptance, and best-effort fallback
+
+### Changed
+
+**Extraction quality overhaul (Node.js verified across GitHub, MDN, Node.js, React, TypeScript)**
+- `truncateContent`: now cuts at paragraph/word boundaries and appends `\n\n[… truncated]` instead of slicing mid-word
+- `http-jsdom` fetcher: added `normalizeText` (collapses whitespace/indentation) and `stripNoiseNodes` (removes 30+ noise selectors: nav, sidebar, cookie banners, code headers, copy buttons, TOC, related links)
+- `github-raw` fetcher: markdown stripper now removes HTML comments (`<!-- -->`), GitHub admonitions (`[!IMPORTANT]`, `[!NOTE]`), and `<details>`/`<summary>`/`<img>` blocks
+- `markdown` fetcher: new `normalizeMarkdownContent` strips YAML frontmatter and JSX component tags (`<Intro>`, `<YouWillLearn>`) common in React/Vue/Docusaurus `.md` files
+
+**Tool descriptions rewritten for LLM discoverability**
+- Every tool description now states when to use it, how the fetcher chain behaves, and its relationship to other tools — so the LLM can pick the right tool (e.g. `browse_page` default vs `smart_browse` for SPAs vs `parallel_browse` for batches)
+
+**Refactors (single source of truth)**
+- Search-engine URLs: `search.ts` HTML fetchers and `utils.ts` `SEARCH_ENGINES` now delegate to `url.ts:buildWebSearchUrl` (previously duplicated in 3 places)
+- Text utilities: `cleanText`, `stripMarkdown`, `stripTags` consolidated in `text.ts`; `llms.ts` and `markdown.ts` import from there instead of holding private copies
+- Stop words: `llms.ts` now uses the shared `constants.ts` list (previously a divergent private copy). This also fixed an llms-routing bug where query tokens like "api" and "reference" were wrongly dropped
+
+### Fixed
+
+**Yahoo result URLs (critical, affected every user)**
+- Yahoo search results no longer leak `RK=2/RS=...` redirect path segments into the final URL — `normalizeSearchResultUrl` now strips these, so links are no longer broken (was 7/7 results broken in live testing)
+
+**Marginalia search**
+- Domain updated from `search.marginalia.nu` (302 redirect) to `marginalia-search.com`
+- Parser rewritten for the new Tailwind-based HTML structure (`text-liteblue` links, `mt-2 text-sm` snippets) — was returning 0 results, now returns 5-20
+
+**DuckDuckGo internal URL filter**
+- `isInternalSearchEngineUrl` now recognizes `duckduckgo.com/html` and `/l/` redirect paths so they don't leak into results
+
+**Archive.org fetcher**
+- Wayback URL format fixed: `web/2/<url>` (latest snapshot redirect) instead of hardcoded stale year `2024`; also strips the Wayback toolbar insert
+
+**Browser resource leaks**
+- `parallel_browse` and `deep_search` now wrap per-URL Playwright pages in `try/finally` so a failed task no longer leaves orphan pages/contexts
+
+**`markdown` fetcher `canHandle`**
+- Now skips when `followLlmsLinks: false`, avoiding a wasted llms.txt lookup on every URL
+
+**Minor**
+- `github-raw` `__bold__` regex now uses the `/g` flag (was stripping only the first occurrence)
+- `cooldownMs` dead config removed
+
 ## [3.1.2] - 2026-05-20
 
 ### Added

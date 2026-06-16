@@ -5,24 +5,29 @@ export interface MarkdownDocument {
 }
 
 import { LRUCache, InflightMap } from "./cache.js";
+import { cleanText, stripMarkdown } from "./text.js";
 
 const FETCH_TIMEOUT_MS = 4_000;
 const MIN_CONTENT_LENGTH = 120;
 const markdownCache = new LRUCache<MarkdownDocument>(300, 20 * 60 * 1000);
 const markdownInflight = new InflightMap<MarkdownDocument | null>();
 
+function normalizeMarkdownContent(text: string): string {
+  let out = text;
+  const fmMatch = out.match(/^---\s*\n[\s\S]*?\n---\s*\n/);
+  if (fmMatch) out = out.slice(fmMatch[0].length);
+  out = out.replace(/<[A-Z][A-Za-z0-9]*(\s[^>]*)?>([\s\S]*?)<\/[A-Z][A-Za-z0-9]*>/g, "$2");
+  out = out.replace(/<[A-Z][A-Za-z0-9]*(\s[^>]*)?\/>/g, "");
+  out = out.replace(/<!--[\s\S]*?-->/g, "");
+  out = stripMarkdown(out);
+  return out;
+}
+
 function normalizeTargetUrl(targetUrl: string): string {
   const parsed = new URL(targetUrl);
   parsed.hash = "";
   parsed.search = "";
   return parsed.toString();
-}
-
-function cleanText(text: string): string {
-  return text
-    .replace(/[\u00ad\u200b-\u200f\u2060\ufeff]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 export function buildMarkdownCandidates(targetUrl: string): string[] {
@@ -83,7 +88,7 @@ async function fetchMarkdownCandidate(candidateUrl: string): Promise<MarkdownDoc
       const result: MarkdownDocument = {
         sourceUrl: candidateUrl,
         title: extractMarkdownTitle(text),
-        content: text.trim(),
+        content: normalizeMarkdownContent(text),
       };
       markdownCache.set(candidateUrl, result);
       return result;

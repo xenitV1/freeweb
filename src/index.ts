@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { RESEARCH_POLICY } from "./constants.js";
 import type { WebSearchResult } from "./types.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { isUrlSafe, checkDownloadRequest, tagExternalContent } from "./security.js";
 import { formatDateForDisplay } from "./dates.js";
 import { normalizeDomainFilter } from "./url.js";
@@ -22,6 +23,11 @@ const server = new McpServer({
   name: "freeweb",
   version: "1.0.0",
 });
+
+const READ_ONLY_OPEN_WORLD: ToolAnnotations = {
+  readOnlyHint: true,
+  openWorldHint: true,
+};
 
 function generateQueryVariations(query: string): string[] {
   const variations = [query];
@@ -48,13 +54,14 @@ function generateQueryVariations(query: string): string[] {
 // ── TOOL: github_search ───────────────────────────────────────────
 server.tool(
   "github_search",
-  "Search GitHub repositories.",
+  "Search GitHub repositories, code, or issues. Returns title, URL, description, stars, language, and last-updated date for each hit. Tries multiple query variations automatically (e.g. 'react hooks' → 'react-hooks', 'react-hooks') to improve recall.",
   {
     query: z.string().describe("Search term"),
     type: z.enum(["repos", "code", "issues"]).optional().default("repos"),
     maxResults: z.number().min(1).max(10).optional().default(5),
     sortByUpdated: z.boolean().optional().default(true),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ query, type, maxResults, sortByUpdated }) => {
     const ctxId = genContextId();
     let results: { title: string; url: string; snippet: string; updatedAt: string; stars: string; language: string }[] = [];
@@ -148,11 +155,12 @@ server.tool(
 // ── TOOL: inspect_llms_txt ───────────────────────────────────────
 server.tool(
   "inspect_llms_txt",
-  "Inspect llms.txt for a site or page and show the parsed guidance structure.",
+  "Fetch and parse a site's llms.txt file, showing its structured guidance (sections, links, notes). Use this to understand what a site recommends LLMs read, or to debug why browse_page routed to a particular page. Returns ranked links when a query is provided.",
   {
     url: z.string().url().describe("Any page or site URL"),
     query: z.string().optional().describe("Optional query to rank the most relevant llms.txt links"),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ url, query }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
@@ -173,15 +181,16 @@ server.tool(
 // ── TOOL: web_search ──────────────────────────────────────────────
 server.tool(
   "web_search",
-  `Search the public web without API keys. ${RESEARCH_POLICY}`,
+  `Search the public web without API keys. Tries engines in order (Yahoo primary, DuckDuckGo, Marginalia) and stops once enough results are found; uses fast native fetch() first and only launches a browser if an engine blocks the request. Returns deduplicated, ranked results with clean URLs (redirect/UTM params stripped). Set engine explicitly to target a specific source. ${RESEARCH_POLICY}`,
   {
     query: z.string().describe("Search term"),
     maxResults: z.number().min(1).max(10).optional().default(5),
-    engine: z.enum(["auto", "yahoo", "ask", "marginalia"]).optional().default("auto"),
+    engine: z.enum(["auto", "yahoo", "duckduckgo", "marginalia", "ask"]).optional().default("auto"),
     domain: z.string().optional().describe("Optional domain filter, e.g. react.dev or github.com"),
     maxAgeMonths: z.number().optional().default(18),
     checkLlmsTxt: z.boolean().optional().default(false),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ query, maxResults, engine, domain, maxAgeMonths, checkLlmsTxt }) => {
     const { results, attempts } = await collectWebSearchResults(query, engine, domain, maxResults, maxAgeMonths);
 
@@ -202,17 +211,18 @@ server.tool(
 // ── TOOL: search_and_browse ───────────────────────────────────────
 server.tool(
   "search_and_browse",
-  `Search the web, open the best results, and extract readable content. ${RESEARCH_POLICY}`,
+  `Search the web, then open and extract readable content from the top results in one call — combines web_search + browse_page. Use this when you want both the ranked result list AND the actual page text, without a separate browse step for each URL. ${RESEARCH_POLICY}`,
   {
     query: z.string().describe("Search term"),
     maxResults: z.number().min(1).max(10).optional().default(5),
     browseTop: z.number().min(1).max(5).optional().default(3),
-    engine: z.enum(["auto", "yahoo", "ask", "marginalia"]).optional().default("auto"),
+    engine: z.enum(["auto", "yahoo", "duckduckgo", "marginalia", "ask"]).optional().default("auto"),
     domain: z.string().optional().describe("Optional domain filter, e.g. react.dev or github.com"),
     maxAgeMonths: z.number().optional().default(18),
     excerptChars: z.number().min(500).max(5000).optional().default(2200),
     followLlmsLinks: z.boolean().optional().default(true),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ query, maxResults, browseTop, engine, domain, maxAgeMonths, excerptChars, followLlmsLinks }) => {
     const { results, attempts } = await collectWebSearchResults(query, engine, domain, maxResults, maxAgeMonths);
 
@@ -273,14 +283,15 @@ server.tool(
 // ── TOOL: browse_page ─────────────────────────────────────────────
 server.tool(
   "browse_page",
-  `Visit a URL and extract content. ${RESEARCH_POLICY}`,
+  `Visit a URL and extract its readable content. Uses a 6-layer fetcher chain: tries fast fetchers first (GitHub raw ~43ms, RSS, static HTML ~400ms) and only falls back to a full browser (~3-5s) when a fast fetcher returns too little or clearly SPA content — so most pages return in under 1s WITHOUT a browser. Use this as the DEFAULT for reading a single page. If the site exposes an llms.txt, it is read first and the most relevant same-site page is routed to automatically. ${RESEARCH_POLICY}`,
   {
-    url: z.string().url().describe("URL"),
+    url: z.string().url().describe("URL to fetch and extract content from"),
     query: z.string().optional().describe("Optional intent so llms.txt can route to a more relevant page"),
     followLlmsLinks: z.boolean().optional().default(true),
     waitFor: z.enum(["domcontentloaded", "load", "networkidle"]).optional().default("domcontentloaded"),
     warnIfOlderThanMonths: z.number().optional().default(24),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ url, query, followLlmsLinks, waitFor, warnIfOlderThanMonths }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
@@ -319,7 +330,7 @@ server.tool(
 // ── TOOL: smart_browse ────────────────────────────────────────────
 server.tool(
   "smart_browse",
-  `Smart page visit: SPA detection, date check. ${RESEARCH_POLICY}`,
+  `Visit a URL with freshness validation and forced SPA handling. Like browse_page but: explicitly waits for JavaScript-rendered content (React/Vue/Next.js) to render, extracts the published date, and warns when content is older than maxAgeMonths. Use this PREFERENTIALLY over browse_page for sites you know are client-rendered SPAs (Twitter, dashboards, heavy JS apps) where browse_page's fast static fetcher may return only a stub. ${RESEARCH_POLICY}`,
   {
     url: z.string().url().describe("URL"),
     query: z.string().optional().describe("Optional intent so llms.txt can route to a more relevant page"),
@@ -327,6 +338,7 @@ server.tool(
     requireFreshContent: z.boolean().optional().default(true),
     maxAgeMonths: z.number().optional().default(12),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ url, query, followLlmsLinks, requireFreshContent, maxAgeMonths }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
@@ -379,12 +391,13 @@ server.tool(
 // ── TOOL: deep_search ─────────────────────────────────────────────
 server.tool(
   "deep_search",
-  `Search directly from sources. ${RESEARCH_POLICY}`,
+  `Search curated developer sources directly — GitHub repos, npm packages, MDN docs, devdocs — and extract fresh content from each. Prefer this over web_search when researching libraries/packages/APIs, since it pulls structured results from authoritative dev sources. ${RESEARCH_POLICY}`,
   {
     query: z.string().describe("Search term"),
     sources: z.array(z.enum(["github", "npm", "mdn", "devdocs"])).optional().default(["github", "npm", "mdn"]),
     maxAgeMonths: z.number().optional().default(12),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ query, sources, maxAgeMonths }) => {
     const ctxId = genContextId();
     const results: { source: string; title: string; url: string; content: string; date?: string; isFresh: boolean }[] = [];
@@ -421,23 +434,25 @@ server.tool(
         }
 
         const page = await browserManager.openPage(ctxId);
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
-        await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
+        try {
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+          await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
 
-        const content = await extractContent(page);
-        const pageDate = await extractDate(page);
-        const dateCheck = checkDateFreshness(pageDate, maxAgeMonths);
+          const content = await extractContent(page);
+          const pageDate = await extractDate(page);
+          const dateCheck = checkDateFreshness(pageDate, maxAgeMonths);
 
-        results.push({
-          source,
-          title: content.title || source,
-          url,
-          content: content.text.slice(0, 1500),
-          date: pageDate,
-          isFresh: dateCheck.isFresh,
-        });
-
-        await page.close();
+          results.push({
+            source,
+            title: content.title || source,
+            url,
+            content: content.text.slice(0, 1500),
+            date: pageDate,
+            isFresh: dateCheck.isFresh,
+          });
+        } finally {
+          await page.close().catch(() => {});
+        }
       }
     }
     } finally {
@@ -465,13 +480,14 @@ server.tool(
 // ── TOOL: github_repo_files ───────────────────────────────────────
 server.tool(
   "github_repo_files",
-  "List GitHub repository files.",
+  "List the folders and files at a path in a GitHub repository (defaults to the repo root on the main branch). Use this to explore a repo's structure before reading specific files via browse_page.",
   {
     owner: z.string().describe("Repository owner"),
     repo: z.string().describe("Repository name"),
     path: z.string().optional().default(""),
     branch: z.string().optional().default("main"),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ owner, repo, path, branch }) => {
     const url = `https://github.com/${owner}/${repo}/tree/${branch}/${path}`;
     const files = await withContext(async (page) => {
@@ -509,10 +525,11 @@ server.tool(
 // ── TOOL: parallel_browse ─────────────────────────────────────────
 server.tool(
   "parallel_browse",
-  "Visit multiple URLs in parallel.",
+  "Visit up to 5 URLs concurrently and extract readable content from each in a single call — much faster than calling browse_page 5 times. Use this when you need to read several pages at once (e.g. comparing docs, gathering multiple search hits). Uses the same 6-layer fetcher chain per URL.",
   {
     urls: z.array(z.string().url()).min(1).max(5).describe("URLs (max 5)"),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ urls }) => {
     const safeUrls: string[] = [];
     const blockedUrls: string[] = [];
@@ -551,22 +568,24 @@ server.tool(
       }
 
       const page = await browserManager.openPage(ctxId);
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
-      await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
+      try {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+        await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
 
-      const content = await extractContent(page);
-      const pageDate = await extractDate(page);
-      const dateCheck = checkDateFreshness(pageDate, 12);
+        const content = await extractContent(page);
+        const pageDate = await extractDate(page);
+        const dateCheck = checkDateFreshness(pageDate, 12);
 
-      await page.close();
-
-      let output = `## ${content.title}\nURL: ${url}`;
-      if (pageDate) {
-        output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
-        if (!dateCheck.isFresh) output += " ⚠️ OLD";
+        let output = `## ${content.title}\nURL: ${url}`;
+        if (pageDate) {
+          output += `\n📅 ${new Date(pageDate).toLocaleDateString("en-US")}`;
+          if (!dateCheck.isFresh) output += " ⚠️ OLD";
+        }
+        output += `\n\n${content.text.slice(0, 4000)}`;
+        return output;
+      } finally {
+        await page.close().catch(() => {});
       }
-      output += `\n\n${content.text.slice(0, 4000)}`;
-      return output;
     });
 
     allResults = await Promise.all(tasks);
@@ -586,10 +605,11 @@ server.tool(
 // ── TOOL: get_page_links ──────────────────────────────────────────
 server.tool(
   "get_page_links",
-  "Extract links from a page.",
+  "Extract all safe outbound links from a page (text + href), up to 100. Use this to discover what a page links to — e.g. finding related docs, source files, or navigation targets — without fetching full page content.",
   {
     url: z.string().url().describe("URL"),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ url }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {
@@ -619,11 +639,12 @@ server.tool(
 // ── TOOL: screenshot ──────────────────────────────────────────────
 server.tool(
   "screenshot",
-  "Take a screenshot.",
+  "Capture a page as a base64 PNG screenshot (optionally full-page). Use this when you need the VISUAL layout of a page rather than its text — e.g. UI review, debugging design, or reading content that doesn't extract well as text.",
   {
     url: z.string().url().describe("URL"),
     fullPage: z.boolean().optional().default(false),
   },
+  READ_ONLY_OPEN_WORLD,
   async ({ url, fullPage }) => {
     const safety = isUrlSafe(url);
     if (!safety.safe) {

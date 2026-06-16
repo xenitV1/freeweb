@@ -14,7 +14,7 @@ A multi-layer MCP (Model Context Protocol) server for web browsing, search, and 
 
 ## Fetcher Chain Architecture
 
-Every URL request goes through 7 fetcher layers, tried in order. First success wins:
+Every URL request goes through 6 fetcher layers, tried in order. First success wins:
 
 | Priority | Fetcher | Speed | Best For |
 |----------|---------|-------|----------|

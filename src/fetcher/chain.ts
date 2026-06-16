@@ -15,6 +15,15 @@ const DEFAULT_CHAIN: Fetcher[] = [
   playwrightFetcher,
 ];
 
+const MIN_QUALITY_LENGTH = 800;
+
+function isLowQuality(result: FetcherResult, isLast: boolean): boolean {
+  if (isLast) return false;
+  if (result.content.length < MIN_QUALITY_LENGTH) return true;
+  if (result.isSpa && result.content.length < MIN_QUALITY_LENGTH * 4) return true;
+  return false;
+}
+
 export async function fetchWithChain(
   url: string,
   opts?: FetcherOptions,
@@ -23,18 +32,30 @@ export async function fetchWithChain(
   const sorted = [...chain].sort((a, b) => a.priority - b.priority);
 
   let lastError: string | undefined;
+  let bestSoFar: FetcherResult | null = null;
 
-  for (const fetcher of sorted) {
+  for (let i = 0; i < sorted.length; i++) {
+    const fetcher = sorted[i];
+    const isLast = i === sorted.length - 1;
     try {
       if (!fetcher.canHandle(url, opts)) continue;
       const result = await fetcher.fetch(url, opts);
-      if (result && result.content.length > 0) {
-        return result;
+      if (!result || result.content.length === 0) continue;
+
+      if (isLowQuality(result, isLast)) {
+        if (!bestSoFar || result.content.length > bestSoFar.content.length) {
+          bestSoFar = result;
+        }
+        continue;
       }
+
+      return result;
     } catch (e) {
       lastError = e instanceof Error ? e.message : "Unknown error";
     }
   }
+
+  if (bestSoFar) return bestSoFar;
 
   throw new Error(
     `All fetchers failed for ${url}${lastError ? `. Last error: ${lastError}` : ""}`,

@@ -55,8 +55,14 @@ function toRawUrl(githubUrl: string, branch = "main"): string[] {
 
 function stripMarkdown(text: string): string {
   return text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$/gim, "")
+    .replace(/<details>[\s\S]*?<\/details>/gi, "")
+    .replace(/<(details|summary|br|hr)\s*\/?>/gi, "")
+    .replace(/<img\s+[^>]*alt="([^"]*)"[^>]*\/?>/gi, "$1")
+    .replace(/<img\s+[^>]*\/?>/gi, "")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/, "$1")
+    .replace(/__([^_]+)__/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
     .replace(/^#{1,6}\s+/gm, "")

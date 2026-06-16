@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { buildWebSearchUrl } from "./url.js";
 
 /** Extract main text content from page */
 export async function extractContent(page: Page): Promise<{ title: string; text: string; html: string }> {
@@ -384,55 +385,29 @@ export interface SearchEngineConfig {
   waitForMs: number;
 }
 
-function normalizeDomain(domain?: string): string | undefined {
-  if (!domain) return undefined;
-  return domain.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").trim().toLowerCase() || undefined;
-}
-
-function sitePrefix(query: string, domain?: string): string {
-  const d = normalizeDomain(domain);
-  return d && !query.includes("site:") ? `site:${d} ${query}` : query;
-}
-
 export const SEARCH_ENGINES: SearchEngineConfig[] = [
   {
     name: "yahoo",
     weight: 28,
-    buildUrl: (q, d) => {
-      const url = new URL("https://search.yahoo.com/search");
-      url.searchParams.set("p", sitePrefix(q, d));
-      return url.toString();
-    },
+    buildUrl: (q, d) => buildWebSearchUrl(q, "yahoo", d),
     waitForMs: 3500,
   },
   {
     name: "marginalia",
     weight: 20,
-    buildUrl: (q, d) => {
-      const url = new URL("https://search.marginalia.nu/search");
-      url.searchParams.set("query", sitePrefix(q, d));
-      return url.toString();
-    },
+    buildUrl: (q, d) => buildWebSearchUrl(q, "marginalia", d),
     waitForMs: 5000,
   },
   {
     name: "ask",
     weight: 8,
-    buildUrl: (q, d) => {
-      const url = new URL("https://www.ask.com/web");
-      url.searchParams.set("q", sitePrefix(q, d));
-      return url.toString();
-    },
+    buildUrl: (q, d) => buildWebSearchUrl(q, "ask", d),
     waitForMs: 3500,
   },
   {
     name: "duckduckgo",
     weight: 15,
-    buildUrl: (q, d) => {
-      const url = new URL("https://html.duckduckgo.com/html/");
-      url.searchParams.set("q", sitePrefix(q, d));
-      return url.toString();
-    },
+    buildUrl: (q, d) => buildWebSearchUrl(q, "duckduckgo", d),
     waitForMs: 4000,
   },
 ];

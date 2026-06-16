@@ -1,19 +1,12 @@
 import type { Fetcher, FetcherResult, FetcherOptions, FetcherSource } from "./types.js";
 import { DEFAULT_FETCHER_OPTIONS, truncateContent } from "./types.js";
 import { LRUCache } from "../cache.js";
+import { stripTags } from "../text.js";
 
 const cache = new LRUCache<FetcherResult>(100, 60 * 60 * 1000);
 
 function buildArchiveUrl(url: string): string {
-  return `https://web.archive.org/web/2024/${url}`;
-}
-
-function stripTags(html: string): string {
-  return html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return `https://web.archive.org/web/2/${url}`;
 }
 
 function extractTitle(html: string): string {

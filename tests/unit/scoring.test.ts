@@ -269,7 +269,7 @@ describe("buildWebSearchUrl", () => {
 
   it("builds Marginalia search URL", () => {
     const url = buildWebSearchUrl("react hooks", "marginalia");
-    expect(url).toContain("search.marginalia.nu/search");
+    expect(url).toContain("marginalia-search.com/search");
     expect(url).toContain("query=react+hooks");
   });
 
@@ -293,7 +293,7 @@ describe("buildWebSearchUrl", () => {
 describe("getWebSearchOrder", () => {
   it("returns all engines in auto mode", () => {
     const order = getWebSearchOrder("auto");
-    expect(order).toEqual(["yahoo", "marginalia", "ask", "duckduckgo"]);
+    expect(order).toEqual(["yahoo", "duckduckgo", "marginalia", "ask"]);
   });
 
   it("puts specified engine first in specific mode", () => {
