@@ -23,6 +23,10 @@ export interface LlmsRelevantLink extends LlmsLink {
   sectionTitle: string;
   optional: boolean;
   score: number;
+  /** Total query-token hits across title/note/section/url — 0 means the link
+   *  only scored on structural priors (non-optional base, keyword bonus), not
+   *  on the query itself. Used to gate auto-routing on genuine relevance. */
+  queryHits: number;
 }
 
 import { LRUCache, InflightMap } from "./cache.js";
@@ -307,7 +311,19 @@ async function fetchLlmsFull(candidateBaseUrl: string, existingDoc: LlmsDocument
       });
       if (!response.ok) return null;
       const text = await response.text();
-      if (!text || text.length <= existingDoc.sourceUrl.length * 2) return null;
+      // Only adopt llms-full.txt if it is genuinely richer than the llms.txt we
+      // already parsed. Comparing against sourceUrl.length (a ~30-char URL) was
+      // effectively no guard and let tiny stub files replace a good document.
+      const existingContentLength = [
+        existingDoc.summary || "",
+        ...existingDoc.introNotes,
+        ...existingDoc.sections.flatMap((s) => [
+          s.title,
+          ...s.notes,
+          ...s.links.map((l) => `${l.title} ${l.note || ""} ${l.url}`),
+        ]),
+      ].join(" ").length;
+      if (!text || text.length <= Math.max(200, existingContentLength)) return null;
       const fullDoc = parseLlmsTxt(text, fullUrl);
       if (fullDoc) llmsCache.set(fullUrl, fullDoc);
       return fullDoc;
@@ -393,6 +409,7 @@ export function findRelevantLlmsLinks(
       sectionTitle: section.title,
       optional: section.optional,
       score,
+      queryHits: titleHits + noteHits + sectionHits + urlHits,
     } satisfies LlmsRelevantLink;
   }))
     .filter((link) => link.score > 1)

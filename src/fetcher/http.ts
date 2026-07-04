@@ -20,7 +20,7 @@ function normalizeText(text: string): string {
     .trim();
 }
 
-function stripNoiseNodes(el: Element, doc: Document): void {
+function stripNoiseNodes(el: Element): void {
   const removeSelectors = [
     "script", "style", "noscript", "svg", "iframe",
     "nav", "header", "footer", "aside",
@@ -63,7 +63,7 @@ function extractMainContent(html: string): { title: string; text: string; select
     for (const sel of selectors) {
       const el = doc.querySelector(sel);
       if (el) {
-        stripNoiseNodes(el, doc);
+        stripNoiseNodes(el);
         const text = normalizeText(el.textContent || "");
         if (text.length > 100) {
           return { title, text, selector: sel };
@@ -72,7 +72,7 @@ function extractMainContent(html: string): { title: string; text: string; select
     }
 
     if (doc.body) {
-      stripNoiseNodes(doc.body, doc);
+      stripNoiseNodes(doc.body);
       const bodyText = normalizeText(doc.body.textContent || "");
       if (bodyText.length > 100) {
         return { title, text: bodyText, selector: "body" };

@@ -108,6 +108,29 @@ describe("SSRF via private IPs", () => {
   it("blocks AWS metadata endpoint specifically", () => {
     expect(isUrlSafe("http://169.254.169.254/latest/meta-data/").safe).toBe(false);
   });
+
+  it("blocks integer/octal-encoded loopback (URL parser normalizes to 127.0.0.1)", () => {
+    expect(isUrlSafe("http://2130706433/").safe).toBe(false);
+    expect(isUrlSafe("http://0177.0.0.1/").safe).toBe(false);
+  });
+
+  it("blocks IPv6 literals including private/ULA and IPv4-mapped loopback", () => {
+    expect(isUrlSafe("http://[::1]/").safe).toBe(false);
+    expect(isUrlSafe("http://[fd00::1]/").safe).toBe(false);
+    expect(isUrlSafe("http://[::ffff:127.0.0.1]/").safe).toBe(false);
+    expect(isUrlSafe("http://[fe80::1]/").safe).toBe(false);
+  });
+
+  it("blocks single-label / dotless internal hostnames", () => {
+    expect(isUrlSafe("http://intranet/").safe).toBe(false);
+    expect(isUrlSafe("http://router/admin").safe).toBe(false);
+    expect(isUrlSafe("http://metadata/").safe).toBe(false);
+  });
+
+  it("still allows normal public dotted domains", () => {
+    expect(isUrlSafe("https://example.com").safe).toBe(true);
+    expect(isUrlSafe("https://developer.mozilla.org/en-US/").safe).toBe(true);
+  });
 });
 
 describe("Protocol confusion", () => {

@@ -82,7 +82,6 @@ async function tryEngineWithBrowser(
   query: string,
   currentEngine: string,
   domain: string | undefined,
-  maxAgeMonths: number,
 ): Promise<{ rawResults: { title: string; url: string; snippet: string }[]; blocked?: string }> {
   try {
     const page = await browserManager.openPage(ctxId);
@@ -157,7 +156,7 @@ export async function collectWebSearchResults(
       if (alreadyOk) continue;
 
       const { rawResults, blocked } = await tryEngineWithBrowser(
-        ctxId, query, currentEngine, domain, maxAgeMonths,
+        ctxId, query, currentEngine, domain,
       );
 
       if (blocked) {

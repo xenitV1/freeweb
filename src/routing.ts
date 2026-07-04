@@ -27,6 +27,11 @@ export function resolveLlmsRoute(url: string, llms: LlmsDocument | null | undefi
 
   const best = relevantLinks[0];
   if (!best) return { requestUrl, targetUrl: requestUrl, routed: false };
+  // Require genuine query relevance: a link that only scored on structural
+  // priors (non-optional base 6 + same-site 8 = 14) with zero query-token hits
+  // must NOT auto-route, otherwise every llms.txt site silently redirects the
+  // browse target on an unrelated query.
+  if (best.queryHits === 0) return { requestUrl, targetUrl: requestUrl, routed: false };
   if (best.score < 10) return { requestUrl, targetUrl: requestUrl, routed: false };
   if (normalizeComparableUrl(best.targetUrl) === requestUrl) return { requestUrl, targetUrl: requestUrl, routed: false };
 

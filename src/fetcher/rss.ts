@@ -65,7 +65,10 @@ export const rssFetcher: Fetcher = {
     const cached = cache.get(url);
     if (cached) return cached;
 
-    const candidates = FEED_PATHS.map((p) => {
+    // Try the URL as given first (it may already point directly at a feed,
+    // possibly at a non-root path like /blog/feed.xml), then probe common
+    // root-level feed paths as fallbacks.
+    const candidates = [url, ...FEED_PATHS.map((p) => {
       try {
         const base = new URL(url);
         base.pathname = p;
@@ -73,7 +76,7 @@ export const rssFetcher: Fetcher = {
       } catch {
         return "";
       }
-    }).filter(Boolean);
+    })].filter(Boolean).filter((c, i, arr) => arr.indexOf(c) === i);
 
     return inflight.getOrSet(url, async () => {
       const start = Date.now();

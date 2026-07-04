@@ -8,7 +8,7 @@ import { resolveLlmsRoute } from "./routing.js";
 import { checkDateFreshness } from "./dates.js";
 import { findLlmsTxt } from "./llms.js";
 import { findMarkdownVersion } from "./markdown.js";
-import { fetchWithChainSoft, type FetcherResult } from "./fetcher/chain.js";
+import { fetchWithChainSoft } from "./fetcher/chain.js";
 
 export async function withContext<T>(fn: (page: Page) => Promise<T>): Promise<T> {
   const ctxId = genContextId();

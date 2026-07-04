@@ -389,7 +389,7 @@ class BrowserManager {
     for (const id of [...this.contexts.keys()]) {
       await this.closeContext(id);
     }
-    for (const [type, instance] of this.engines) {
+    for (const instance of this.engines.values()) {
       if (instance.browser) {
         await instance.browser.close().catch(() => {});
         instance.browser = null;
@@ -413,7 +413,7 @@ class BrowserManager {
         now - instance.lastUsed > this.IDLE_TIMEOUT_MS
       ) {
         let hasActiveContexts = false;
-        for (const [ctxId, engine] of this.contextEngineMap.entries()) {
+        for (const engine of this.contextEngineMap.values()) {
           if (engine === type) {
             hasActiveContexts = true;
             break;
@@ -454,21 +454,6 @@ class BrowserManager {
 
     return this.launchPromise;
   }
-}
-
-export function selectEngineInternal(
-  weights: Record<EngineType, number>,
-  allowed: EngineType[],
-): EngineType {
-  if (allowed.length === 0) throw new Error("All engines excluded or disabled");
-  if (allowed.length === 1) return allowed[0];
-  const totalWeight = allowed.reduce((sum, e) => sum + weights[e], 0);
-  let random = Math.random() * totalWeight;
-  for (const engine of allowed) {
-    random -= weights[engine];
-    if (random <= 0) return engine;
-  }
-  return allowed[allowed.length - 1];
 }
 
 export const browserManager = new BrowserManager();

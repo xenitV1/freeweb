@@ -73,7 +73,7 @@ describe("resolveLlmsRoute", () => {
     expect(result.routed).toBe(false);
   });
 
-  it("BUG: routes even for nonsense query because same-site bonus inflates score", () => {
+  it("does not route for a nonsense query with zero relevance (query-hit gate)", () => {
     const doc: LlmsDocument = {
       sourceUrl: "https://example.com/llms.txt",
       title: "Example",
@@ -90,7 +90,7 @@ describe("resolveLlmsRoute", () => {
       ],
     };
     const result = resolveLlmsRoute("https://example.com/", doc, "xyzzyplughnothing");
-    expect(result.routed).toBe(true);
+    expect(result.routed).toBe(false);
   });
 
   it("deroutes .md extension from target", () => {

@@ -99,7 +99,7 @@ Every URL request goes through the chain, tried in priority order. First success
 | `search_and_browse` | Search + open top hits + extract content |
 | `browse_page` | Visit URL, extract readable content, optional llms.txt routing |
 | `smart_browse` | SPA-aware browsing with freshness validation |
-| `deep_search` | Multi-source search (GitHub, npm, MDN, devdocs) |
+| `deep_search` | Multi-source search via free JSON APIs (GitHub, npm, MDN) |
 | `github_search` | Search GitHub repos/code/issues |
 | `github_repo_files` | List files in a GitHub repo |
 | `parallel_browse` | Browse up to 5 URLs concurrently |

@@ -146,7 +146,7 @@ export function isInternalSearchEngineUrl(url: string): boolean {
     if (hostname === "search.yahoo.com" && pathname === "/search") return true;
     if ((hostname === "www.ask.com" || hostname === "ask.com") && pathname.startsWith("/web")) return true;
     if ((hostname === "search.marginalia.nu" || hostname === "marginalia-search.com") && pathname.startsWith("/search")) return true;
-    if (hostname.endsWith("duckduckgo.com") && (pathname === "/html" || pathname.startsWith("/l/"))) return true;
+    if (hostname.endsWith("duckduckgo.com") && (pathname === "/html" || pathname === "/html/" || pathname.startsWith("/l/"))) return true;
     return false;
   } catch {
     return true;

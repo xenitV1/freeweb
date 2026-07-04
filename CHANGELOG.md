@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepalivechangelog.com/en/1.0.0/).
 
+## [3.3.0] - 2026-07-04
+
+### Added
+
+**`deep_search` rewritten to use free JSON APIs (was returning garbage)**
+- Previously scraped each source's HTML *search-results page* and dumped raw main-content text: GitHub returned only the filter sidebar, MDN (a client-rendered SPA) returned nothing ("Skip to search"), so results were unusable
+- Now queries each source's public JSON API directly — no browser, no keys: GitHub `api.github.com/search/repositories`, npm `registry.npmjs.org/-/v1/search`, MDN `developer.mozilla.org/api/v1/search`
+- Returns structured, ranked results with real titles, URLs, descriptions, stars/versions, and last-updated dates
+- New `maxResultsPerSource` parameter (1–10, default 5); new `src/deep-search.ts` module with 5 unit tests
+- **Breaking:** removed the `devdocs` source (no reliable free search API; it only ever produced noise)
+
+### Fixed
+
+**Security — closed SSRF bypasses in `isUrlSafe`**
+- IPv6 literals (e.g. `http://[fd00::1]/`, `http://[::ffff:127.0.0.1]/`) were allowed despite loopback `::1` being blocked — now all IPv6 literals are rejected, consistent with blocking all IPv4 literals
+- Single-label / dotless hostnames (`http://intranet/`, `http://metadata/`) — common internal SSRF targets — are now rejected
+
+**llms.txt auto-routing no longer misroutes on irrelevant queries**
+- A same-site link with zero query-token hits scored `6 (base) + 8 (same-site) = 14`, clearing the `>= 10` routing threshold, so `browse_page` with a query on any llms.txt site would silently redirect to an unrelated link
+- Routing now requires genuine query relevance (`queryHits > 0`) before redirecting
+
+**RSS fetcher now honors non-root feed URLs**
+- The candidate builder overwrote the URL path with root-level feed paths, so a directly-supplied feed like `https://example.com/blog/feed.xml` was never fetched — the original URL is now tried first
+
+**GitHub raw fetcher tries `master` as well as `main`**
+- Bare `github.com/owner/repo` URLs only probed the `main` branch, so READMEs on `master`-default repos fell back to the slow browser path
+
+**llms-full.txt richness guard fixed**
+- The "is llms-full bigger?" check compared against `sourceUrl.length * 2` (~60 chars, effectively no guard), letting a tiny stub replace a rich `llms.txt` — now compared against the existing document's actual aggregated content length
+
+**DuckDuckGo internal-URL filter**
+- `isInternalSearchEngineUrl` matched `/html` but the results page path is `/html/`; both forms are now recognized
+
 ## [3.2.0] - 2026-06-16
 
 ### Added

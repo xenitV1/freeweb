@@ -24,12 +24,20 @@ export function isUrlSafe(url: string): { safe: boolean; reason?: string } {
       return { safe: false, reason: `Unsafe protocol: ${parsed.protocol}` };
     }
     const hostname = parsed.hostname.toLowerCase();
-    if (hostname === "[::1]" || hostname === "::1") {
-      return { safe: false, reason: "IPv6 loopback not allowed" };
+    // Block all IPv6 literals (bracketed hosts contain ":"), consistent with
+    // blocking all IPv4 literals below — raw IP access is not a public site and
+    // ::1 / ::ffff:127.0.0.1 / fd00::1 etc. are SSRF vectors to loopback/private.
+    if (hostname.includes(":") || hostname.startsWith("[")) {
+      return { safe: false, reason: "IP address not allowed" };
     }
     const privateHosts = ["localhost", "localhost.localdomain"];
     if (privateHosts.includes(hostname)) {
       return { safe: false, reason: "Private hostname not allowed" };
+    }
+    // Block single-label / dotless hostnames (e.g. intranet, router, metadata) —
+    // never a public site, commonly internal SSRF targets.
+    if (!hostname.includes(".")) {
+      return { safe: false, reason: "Non-public hostname not allowed" };
     }
     const hostSegments = new Set(hostname.split("."));
     for (const blocked of BLOCKED_DOMAINS) {

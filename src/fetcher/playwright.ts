@@ -1,4 +1,3 @@
-import type { Page } from "playwright";
 import type { Fetcher, FetcherResult, FetcherOptions, FetcherSource } from "./types.js";
 import { DEFAULT_FETCHER_OPTIONS, truncateContent } from "./types.js";
 import { browserManager } from "../browser.js";

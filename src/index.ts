@@ -3,14 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { RESEARCH_POLICY } from "./constants.js";
-import type { WebSearchResult } from "./types.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { isUrlSafe, checkDownloadRequest, tagExternalContent } from "./security.js";
 import { formatDateForDisplay } from "./dates.js";
-import { normalizeDomainFilter } from "./url.js";
 import { formatAttemptSummary } from "./scoring.js";
 import { browseUrl, browseSearchResults, withContext } from "./browse.js";
 import { fetchWithChainSoft } from "./fetcher/chain.js";
+import { deepSearch } from "./deep-search.js";
 import {
   collectWebSearchResults, formatWebSearchResults, enrichResultsWithLlms,
 } from "./search.js";
@@ -391,89 +390,44 @@ server.tool(
 // ── TOOL: deep_search ─────────────────────────────────────────────
 server.tool(
   "deep_search",
-  `Search curated developer sources directly — GitHub repos, npm packages, MDN docs, devdocs — and extract fresh content from each. Prefer this over web_search when researching libraries/packages/APIs, since it pulls structured results from authoritative dev sources. ${RESEARCH_POLICY}`,
+  `Search curated developer sources directly — GitHub repos, npm packages, MDN docs — via their free JSON APIs (no browser, no keys). Returns structured, ranked results with names, URLs, descriptions, stars/versions, and last-updated dates. Prefer this over web_search when researching libraries/packages/APIs. ${RESEARCH_POLICY}`,
   {
     query: z.string().describe("Search term"),
-    sources: z.array(z.enum(["github", "npm", "mdn", "devdocs"])).optional().default(["github", "npm", "mdn"]),
+    sources: z.array(z.enum(["github", "npm", "mdn"])).optional().default(["github", "npm", "mdn"]),
     maxAgeMonths: z.number().optional().default(12),
+    maxResultsPerSource: z.number().min(1).max(10).optional().default(5),
   },
   READ_ONLY_OPEN_WORLD,
-  async ({ query, sources, maxAgeMonths }) => {
-    const ctxId = genContextId();
-    const results: { source: string; title: string; url: string; content: string; date?: string; isFresh: boolean }[] = [];
+  async ({ query, sources, maxAgeMonths, maxResultsPerSource }) => {
+    const items = await deepSearch(query, sources, maxResultsPerSource);
 
-    const sourceUrls: Record<string, string[]> = {
-      github: [`https://github.com/search?q=${encodeURIComponent(query)}&type=repositories&s=updated&o=desc`],
-      npm: [`https://www.npmjs.com/search?q=${encodeURIComponent(query)}`],
-      mdn: [`https://developer.mozilla.org/en-US/search?q=${encodeURIComponent(query)}`],
-      devdocs: [`https://devdocs.io/#q=${encodeURIComponent(query)}`],
-    };
-
-    try {
-    for (const source of sources) {
-      const urls = sourceUrls[source];
-      if (!urls) continue;
-
-      for (const url of urls) {
-        const safety = isUrlSafe(url);
-        if (!safety.safe) continue;
-
-        const chainResult = await fetchWithChainSoft(url, { maxContentLength: 1500, maxAgeMonths });
-
-        if (chainResult && !chainResult.isSpa && chainResult.content.length > 100) {
-          const dateCheck = checkDateFreshness(chainResult.date, maxAgeMonths);
-          results.push({
-            source,
-            title: chainResult.title || source,
-            url,
-            content: chainResult.content,
-            date: chainResult.date,
-            isFresh: dateCheck.isFresh,
-          });
-          continue;
-        }
-
-        const page = await browserManager.openPage(ctxId);
-        try {
-          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
-          await page.waitForSelector("main, article, .content, [role='main'], body", { timeout: 5000 }).catch(() => {});
-
-          const content = await extractContent(page);
-          const pageDate = await extractDate(page);
-          const dateCheck = checkDateFreshness(pageDate, maxAgeMonths);
-
-          results.push({
-            source,
-            title: content.title || source,
-            url,
-            content: content.text.slice(0, 1500),
-            date: pageDate,
-            isFresh: dateCheck.isFresh,
-          });
-        } finally {
-          await page.close().catch(() => {});
-        }
-      }
-    }
-    } finally {
-    await browserManager.closeContext(ctxId);
+    if (items.length === 0) {
+      return { content: [{ type: "text" as const, text: `No results found for "${query}" across sources: ${sources.join(", ")}.` }] };
     }
 
-    const freshResults = results.filter((r) => r.isFresh);
-    const oldResults = results.filter((r) => !r.isFresh);
+    const enriched = items.map((item) => {
+      const dateCheck = checkDateFreshness(item.date, maxAgeMonths);
+      return { ...item, isFresh: dateCheck.isFresh };
+    });
+
+    const freshResults = enriched.filter((r) => r.isFresh);
+    const oldResults = enriched.filter((r) => !r.isFresh);
     const sortedResults = [...freshResults, ...oldResults];
 
     const formatted = sortedResults.map((r, i) => {
       let line = `[${i + 1}] **${r.title}** (${r.source})`;
+      if (r.meta) line += ` — ${r.meta}`;
       if (r.date) {
-        line += ` - 📅 ${new Date(r.date).toLocaleDateString("en-US")}`;
+        line += `\n    📅 ${new Date(r.date).toLocaleDateString("en-US")}`;
         if (!r.isFresh) line += " ⚠️ OLD";
       }
-      line += `\n    URL: ${r.url}\n    ${r.content.slice(0, 300)}...`;
+      line += `\n    URL: ${r.url}`;
+      if (r.content) line += `\n    ${r.content.slice(0, 300)}`;
       return line;
     }).join("\n\n");
 
-    return { content: [{ type: "text" as const, text: tagExternalContent(`# Deep Search: "${query}"\n${freshResults.length}/${results.length} sources fresh\n\n${formatted}`) }] };
+    const datedCount = enriched.filter((r) => r.date).length;
+    return { content: [{ type: "text" as const, text: tagExternalContent(`# Deep Search: "${query}"\n${enriched.length} result(s)${datedCount ? ` · ${freshResults.filter((r) => r.date).length}/${datedCount} fresh` : ""}\n\n${formatted}`) }] };
   }
 );
 
@@ -666,10 +620,10 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 
 // ── GRACEFUL SHUTDOWN ──────────────────────────────────────────────
-async function gracefulShutdown(signal: string) {
+async function gracefulShutdown() {
   await browserManager.close().catch(() => {});
   process.exit(0);
 }
 
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown());
+process.on("SIGINT", () => gracefulShutdown());

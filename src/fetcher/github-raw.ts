@@ -25,11 +25,15 @@ function toRawUrl(githubUrl: string, branch = "main"): string[] {
     const repo = parts[1];
 
     if (parts.length === 2) {
-      return [
-        `${RAW_BASE}/${owner}/${repo}/${branch}/README.md`,
-        `${RAW_BASE}/${owner}/${repo}/${branch}/readme.md`,
-        `${RAW_BASE}/${owner}/${repo}/${branch}/Readme.md`,
-      ];
+      // Bare repo root: the default branch is unknown, so try both common
+      // defaults (main for newer repos, master for older ones).
+      const branches = branch === "main" ? ["main", "master"] : [branch, "main", "master"];
+      const uniqueBranches = branches.filter((b, i, arr) => arr.indexOf(b) === i);
+      return uniqueBranches.flatMap((b) => [
+        `${RAW_BASE}/${owner}/${repo}/${b}/README.md`,
+        `${RAW_BASE}/${owner}/${repo}/${b}/readme.md`,
+        `${RAW_BASE}/${owner}/${repo}/${b}/Readme.md`,
+      ]);
     }
 
     if (parts[2] === "blob" && parts.length >= 5) {
