@@ -2,6 +2,7 @@ import type { Fetcher, FetcherResult, FetcherOptions, FetcherSource } from "./ty
 import { DEFAULT_FETCHER_OPTIONS, truncateContent } from "./types.js";
 import { LRUCache } from "../cache.js";
 import { stripTags } from "../text.js";
+import { safeFetch } from "./safe-fetch.js";
 
 const cache = new LRUCache<FetcherResult>(100, 60 * 60 * 1000);
 
@@ -41,9 +42,8 @@ export const cacheFetcher: Fetcher = {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeout);
-      const res = await fetch(archiveUrl, {
+      const res = await safeFetch(archiveUrl, {
         signal: ctrl.signal,
-        redirect: "follow",
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },

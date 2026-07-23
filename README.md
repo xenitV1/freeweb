@@ -2,7 +2,7 @@
 
 **Give your LLM unlimited web access - no API keys, no rate limits, no restrictions.**
 
-A multi-layer MCP (Model Context Protocol) server for web browsing, search, and content extraction. Uses a **fetcher chain** with 7 fallback layers — from ultra-fast native `fetch()` (~43ms) to full Playwright browser automation (~3-5s). No API keys required.
+A multi-layer MCP (Model Context Protocol) server for web browsing, search, and content extraction. Uses a **fetcher chain** with 6 fallback layers — from ultra-fast native `fetch()` (~43ms) to full Playwright browser automation (~3-5s). No API keys required.
 
 ## Why FreeWeb?
 
@@ -140,8 +140,10 @@ Then add to your MCP config:
 - ✅ Only HTTPS/HTTP URLs are visited
 - ✅ Suspicious domains are blocked
 - ✅ Downloads require explicit user approval
+- ✅ IP literals (IPv4/IPv6, incl. cloud metadata 169.254.x) are blocked
+- ✅ SSRF protection: DNS resolution is validated against private/loopback ranges, and HTTP redirects are re-checked before each hop (blocks `localtest.me`, `*.nip.io` rebinding, redirect-to-internal)
+- ✅ External web content is wrapped in an `<external-content>` safety notice to blunt indirect prompt injection
 - ✅ No forms filled, no logins, no payments
-- ✅ IP addresses are blocked
 
 ## Content Freshness
 

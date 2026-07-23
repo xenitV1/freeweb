@@ -52,12 +52,3 @@ export interface LlmsRouteDecision {
   reason?: string;
 }
 
-export interface RateLimitConfig {
-  maxRequestsPerMinute: number;
-  cooldownMs: number;
-}
-
-export interface RequestContext {
-  requestCount: number;
-  windowStart: number;
-}

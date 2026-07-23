@@ -1,6 +1,7 @@
 import type { Fetcher, FetcherResult, FetcherOptions, FetcherSource } from "./types.js";
 import { DEFAULT_FETCHER_OPTIONS, truncateContent } from "./types.js";
 import { LRUCache, InflightMap } from "../cache.js";
+import { safeFetch } from "./safe-fetch.js";
 
 const RAW_BASE = "https://raw.githubusercontent.com";
 const cache = new LRUCache<FetcherResult>(200, 30 * 60 * 1000);
@@ -110,7 +111,7 @@ export const githubRawFetcher: Fetcher = {
         try {
           const ctrl = new AbortController();
           const timer = setTimeout(() => ctrl.abort(), timeout);
-          const res = await fetch(rawUrl, {
+          const res = await safeFetch(rawUrl, {
             signal: ctrl.signal,
             headers: { "User-Agent": "freeweb-mcp/2.0" },
           });

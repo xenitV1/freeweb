@@ -1,6 +1,6 @@
 {
   "name": "freeweb-mcp",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Secure MCP server for web browsing with multi-layer fetcher chain - no API keys required",
   "keywords": [
     "mcp",
@@ -29,7 +29,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
-    "test": "vitest run",
+    "test": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
     "test:watch": "vitest",
     "prepare": "npm run build"
   },

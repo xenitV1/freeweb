@@ -6,6 +6,7 @@ export interface MarkdownDocument {
 
 import { LRUCache, InflightMap } from "./cache.js";
 import { cleanText, stripMarkdown } from "./text.js";
+import { safeFetch } from "./fetcher/safe-fetch.js";
 
 const FETCH_TIMEOUT_MS = 4_000;
 const MIN_CONTENT_LENGTH = 120;
@@ -73,9 +74,8 @@ async function fetchMarkdownCandidate(candidateUrl: string): Promise<MarkdownDoc
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
-      const response = await fetch(candidateUrl, {
+      const response = await safeFetch(candidateUrl, {
         method: "GET",
-        redirect: "follow",
         signal: controller.signal,
         headers: {
           "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",

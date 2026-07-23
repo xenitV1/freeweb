@@ -2,6 +2,8 @@ import type { Fetcher, FetcherResult, FetcherOptions, FetcherSource } from "./ty
 import { DEFAULT_FETCHER_OPTIONS, truncateContent } from "./types.js";
 import { browserManager } from "../browser.js";
 import { extractContent, extractDate, extractLinks, genContextId } from "../utils.js";
+import { validateFetchTarget } from "./safe-fetch.js";
+import { isUrlSafe } from "../security.js";
 
 export const playwrightFetcher: Fetcher = {
   name: "playwright",
@@ -23,9 +25,17 @@ export const playwrightFetcher: Fetcher = {
     const start = Date.now();
 
     try {
+      const preCheck = await validateFetchTarget(url);
+      if (!preCheck.ok) throw new Error(`Blocked SSRF target: ${preCheck.reason}`);
+
       const page = await browserManager.openPage(ctxId);
 
       await page.goto(url, { waitUntil: waitFor, timeout: 7000 }).catch(() => {});
+
+      const navUrl = page.url();
+      if (navUrl.startsWith("http") && !isUrlSafe(navUrl).safe) {
+        throw new Error(`Navigation redirected to unsafe URL: ${navUrl}`);
+      }
 
       let isSpa = false;
       if (detectSpa) {

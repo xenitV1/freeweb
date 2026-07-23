@@ -31,6 +31,7 @@ export interface LlmsRelevantLink extends LlmsLink {
 
 import { LRUCache, InflightMap } from "./cache.js";
 import { cleanText, stripMarkdown, buildQueryTokens, countQueryHits } from "./text.js";
+import { safeFetch } from "./fetcher/safe-fetch.js";
 
 const MAX_LLMS_BYTES = 60_000;
 const FETCH_TIMEOUT_MS = 3_500;
@@ -270,9 +271,8 @@ async function fetchLlmsCandidate(candidateUrl: string): Promise<LlmsDocument | 
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     try {
-      const response = await fetch(candidateUrl, {
+      const response = await safeFetch(candidateUrl, {
         method: "GET",
-        redirect: "follow",
         signal: controller.signal,
         headers: {
           "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",
@@ -300,9 +300,8 @@ async function fetchLlmsFull(candidateBaseUrl: string, existingDoc: LlmsDocument
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      const response = await fetch(fullUrl, {
+      const response = await safeFetch(fullUrl, {
         method: "GET",
-        redirect: "follow",
         signal: controller.signal,
         headers: {
           "Accept": "text/markdown, text/plain, text/*;q=0.9, */*;q=0.1",

@@ -3,6 +3,8 @@
 // returns structured, parseable results (unlike scraping SPA search pages,
 // which yields filter-sidebar noise for GitHub and nothing for MDN).
 
+import { safeFetch } from "./fetcher/safe-fetch.js";
+
 export type DeepSearchSource = "github" | "npm" | "mdn";
 
 export interface DeepSearchItem {
@@ -25,9 +27,8 @@ async function fetchJson(
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       signal: ctrl.signal,
-      redirect: "follow",
       headers: {
         "User-Agent": USER_AGENT,
         Accept: "application/json",

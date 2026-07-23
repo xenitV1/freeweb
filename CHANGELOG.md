@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepalivechangelog.com/en/1.0.0/).
 
+## [3.4.0] - 2026-07-23
+
+### Added
+
+**SSRF guard — DNS resolution + redirect re-validation (`src/fetcher/safe-fetch.ts`)**
+- All native `fetch()` calls now route through `safeFetch`, which (a) resolves the hostname and rejects private/loopback/link-local IPs — closes DNS-rebinding vectors like `localtest.me`→127.0.0.1, `*.nip.io`/`*.sslip.io`→arbitrary internal IPs, and cloud metadata hosts (`metadata.google.internal`); and (b) follows HTTP redirects manually and re-validates every hop against `isUrlSafe` + DNS — closes redirect-to-internal chains (`evil.com` → 302 → `169.254.169.254`).
+- Wired into every fetcher (`http`, `github-raw`, `rss`, `archive-cache`, `playwright`), `deep-search`, and `llms`/`markdown` discovery. 37 new unit tests cover IP ranges, DNS rebinding, fail-closed, and redirect-to-internal.
+
+**Prompt-injection guard now covers all content-returning tools**
+- `web_search`, `inspect_llms_txt`, `github_search`, and `get_page_links` now wrap external text in `<external-content>` with the safety notice (previously only 5 of 9 content tools were wrapped).
+
+**CI**
+- Added `.github/workflows/ci.yml` — runs type-check, build, and unit tests on every push/PR to `main`.
+
+### Changed
+
+**`index.ts` split**
+- Bootstrap (server, transport, graceful shutdown — now 23 lines) is separated from tool registration, which moved to `src/tools.ts`. No behavior change.
+
+**`npm test` now runs unit tests only**
+- Previously ran the full suite including an external LLM-API integration test that hung for minutes. `npm test` is now `vitest run tests/unit` (fast, network-free); added `npm run test:integration`; the GLM API eval moved to `tests/manual/`.
+
+**MCP server version**
+- The server now reports the correct version to MCP clients (was hardcoded `1.0.0`).
+
+### Removed
+
+**Dead `rate-limit.ts`**
+- The sliding-window limiter was exported but never wired into any code path; removed along with its `RateLimitConfig`/`RequestContext` types and tests.
+
+### Fixed
+
+**README accuracy**
+- Fetcher chain count corrected (said "7 layers" while the table listed 6); the Security Rules section now accurately describes the SSRF/DNS protections and the external-content prompt-injection guard.
+
 ## [3.3.0] - 2026-07-04
 
 ### Added

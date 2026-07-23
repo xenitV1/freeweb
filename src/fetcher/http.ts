@@ -2,6 +2,7 @@ import type { Fetcher, FetcherResult, FetcherOptions, FetcherSource } from "./ty
 import { DEFAULT_FETCHER_OPTIONS, truncateContent } from "./types.js";
 import { LRUCache, InflightMap } from "../cache.js";
 import { createRequire } from "node:module";
+import { safeFetch } from "./safe-fetch.js";
 
 const require = createRequire(import.meta.url);
 
@@ -125,9 +126,8 @@ export const httpFetcher: Fetcher = {
       try {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), timeout);
-        const res = await fetch(url, {
+        const res = await safeFetch(url, {
           signal: ctrl.signal,
-          redirect: "follow",
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain,*/*;q=0.1",
