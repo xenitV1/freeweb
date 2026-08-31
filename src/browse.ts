@@ -9,6 +9,7 @@ import { checkDateFreshness } from "./dates.js";
 import { findLlmsTxt } from "./llms.js";
 import { findMarkdownVersion } from "./markdown.js";
 import { fetchWithChainSoft } from "./fetcher/chain.js";
+import type { FetcherResult } from "./fetcher/types.js";
 
 export async function withContext<T>(fn: (page: Page) => Promise<T>): Promise<T> {
   const ctxId = genContextId();
@@ -67,6 +68,40 @@ export interface BrowseResult {
   links?: { text: string; href: string }[];
 }
 
+function resultFromChain(
+  url: string,
+  chainResult: FetcherResult,
+  llms: LlmsDocument | null,
+  route: LlmsRouteDecision,
+  maxAgeMonths: number,
+): BrowseResult {
+  let dateWarning = "";
+  let isFresh = true;
+  if (chainResult.date) {
+    const dateCheck = checkDateFreshness(chainResult.date, maxAgeMonths);
+    isFresh = dateCheck.isFresh;
+    dateWarning = dateCheck.warning;
+  }
+
+  return {
+    url,
+    finalUrl: chainResult.finalUrl,
+    title: chainResult.title,
+    content: chainResult.content,
+    date: chainResult.date,
+    dateWarning,
+    isFresh,
+    isSpa: chainResult.isSpa,
+    llms,
+    markdownUrl: chainResult.contentSource === "markdown" ? chainResult.finalUrl : undefined,
+    contentSource: chainResult.contentSource,
+    fetcherUsed: chainResult.fetcherName,
+    fetcherMs: chainResult.ms,
+    route,
+    links: chainResult.links,
+  } satisfies BrowseResult;
+}
+
 export async function browseUrl(options: BrowseOptions): Promise<BrowseResult> {
   const {
     url,
@@ -98,90 +133,76 @@ export async function browseUrl(options: BrowseOptions): Promise<BrowseResult> {
   });
 
   if (chainResult && !chainResult.isSpa && chainResult.content.length > 200) {
-    let dateWarning = "";
-    let isFresh = true;
-    if (chainResult.date) {
-      const dateCheck = checkDateFreshness(chainResult.date, maxAgeMonths);
-      isFresh = dateCheck.isFresh;
-      dateWarning = dateCheck.warning;
-    }
-
-    return {
-      url,
-      finalUrl: chainResult.finalUrl,
-      title: chainResult.title,
-      content: chainResult.content,
-      date: chainResult.date,
-      dateWarning,
-      isFresh,
-      isSpa: false,
-      llms,
-      markdownUrl: chainResult.contentSource === "markdown" ? chainResult.finalUrl : undefined,
-      contentSource: chainResult.contentSource,
-      fetcherUsed: chainResult.fetcherName,
-      fetcherMs: chainResult.ms,
-      route,
-      links: chainResult.links,
-    } satisfies BrowseResult;
+    return resultFromChain(url, chainResult, llms, route, maxAgeMonths);
   }
 
   const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
 
-  return withContext(async (page) => {
-    await page.goto(activeUrl, { waitUntil: waitFor, timeout: 7000 }).catch(() => {});
+  try {
+    return await withContext(async (page) => {
+      await page.goto(activeUrl, { waitUntil: waitFor, timeout: 7000 }).catch(() => {});
 
-    let isSpa = false;
-    if (detectSpa) {
-      isSpa = await page.evaluate(() => {
-        return window.location.hash.length > 0
-          || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
-      }).catch(() => false);
+      let isSpa = false;
+      if (detectSpa) {
+        isSpa = await page.evaluate(() => {
+          return window.location.hash.length > 0
+            || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
+        }).catch(() => false);
 
-      if (isSpa) {
-        await page.waitForTimeout(spaTimeout);
-        await page.waitForSelector("main, article, .content, [role='main']", { timeout: 10000 }).catch(() => {});
+        if (isSpa) {
+          await page.waitForTimeout(spaTimeout);
+          await page.waitForSelector("main, article, .content, [role='main']", { timeout: 10000 }).catch(() => {});
+        } else {
+          await page.waitForTimeout(staticTimeout);
+        }
       } else {
         await page.waitForTimeout(staticTimeout);
       }
-    } else {
-      await page.waitForTimeout(staticTimeout);
+
+      const content = await extractContent(page);
+      const pageDate = await extractDate(page);
+      const finalUrl = page.url();
+      const links = shouldExtractLinks ? await extractLinks(page) : undefined;
+
+      const preferredTitle = markdown?.title || content.title;
+      const preferredText = markdown?.content || content.text;
+      const truncated = maxContentLength < preferredText.length
+        ? preferredText.slice(0, maxContentLength)
+        : preferredText;
+
+      let dateWarning = "";
+      let isFresh = true;
+      if (pageDate) {
+        const dateCheck = checkDateFreshness(pageDate, maxAgeMonths);
+        isFresh = dateCheck.isFresh;
+        dateWarning = dateCheck.warning;
+      }
+
+      return {
+        url,
+        finalUrl,
+        title: preferredTitle,
+        content: truncated,
+        date: pageDate,
+        dateWarning,
+        isFresh,
+        isSpa,
+        llms,
+        markdownUrl: markdown?.sourceUrl,
+        contentSource: markdown ? "markdown" as const : "html" as const,
+        route,
+        links,
+      } satisfies BrowseResult;
+    });
+  } catch (e) {
+    // Browser layer unavailable (e.g. Playwright binaries not installed):
+    // degrade to whatever the static fetchers produced instead of failing
+    // the whole tool call.
+    if (chainResult) {
+      return resultFromChain(url, chainResult, llms, route, maxAgeMonths);
     }
-
-    const content = await extractContent(page);
-    const pageDate = await extractDate(page);
-    const finalUrl = page.url();
-    const links = shouldExtractLinks ? await extractLinks(page) : undefined;
-
-    const preferredTitle = markdown?.title || content.title;
-    const preferredText = markdown?.content || content.text;
-    const truncated = maxContentLength < preferredText.length
-      ? preferredText.slice(0, maxContentLength)
-      : preferredText;
-
-    let dateWarning = "";
-    let isFresh = true;
-    if (pageDate) {
-      const dateCheck = checkDateFreshness(pageDate, maxAgeMonths);
-      isFresh = dateCheck.isFresh;
-      dateWarning = dateCheck.warning;
-    }
-
-    return {
-      url,
-      finalUrl,
-      title: preferredTitle,
-      content: truncated,
-      date: pageDate,
-      dateWarning,
-      isFresh,
-      isSpa,
-      llms,
-      markdownUrl: markdown?.sourceUrl,
-      contentSource: markdown ? "markdown" as const : "html" as const,
-      route,
-      links,
-    } satisfies BrowseResult;
-  });
+    throw e;
+  }
 }
 
 export async function browseSearchResults(
@@ -235,49 +256,55 @@ export async function browseSearchResults(
       }
 
       const markdown = llms ? await findMarkdownVersion(activeUrl) : null;
-      const page = await browserManager.openPage(ctxId);
 
       try {
-        await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
+        const page = await browserManager.openPage(ctxId);
+        try {
+          await page.goto(activeUrl, { waitUntil: "domcontentloaded", timeout: 7000 }).catch(() => {});
 
-        const isSPA = await page.evaluate(() => {
-          return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
-        }).catch(() => false);
+          const isSPA = await page.evaluate(() => {
+            return window.location.hash.length > 0 || !!document.querySelector("[data-reactroot], [data-v-app], #__next, #app");
+          }).catch(() => false);
 
-        if (isSPA) {
-          await page.waitForTimeout(3000);
-          await page.waitForSelector("main, article, .content, [role='main']", { timeout: 5000 }).catch(() => {});
-        } else {
-          await page.waitForTimeout(1500);
+          if (isSPA) {
+            await page.waitForTimeout(3000);
+            await page.waitForSelector("main, article, .content, [role='main']", { timeout: 5000 }).catch(() => {});
+          } else {
+            await page.waitForTimeout(1500);
+          }
+
+          const content = await extractContent(page);
+          const pageDate = await extractDate(page);
+          const finalUrl = page.url();
+          const freshnessWarning = pageDate ? checkDateFreshness(pageDate, maxAgeMonths).warning : result.freshnessWarning;
+          const excerpt = (markdown?.content || content.text).slice(0, excerptChars);
+
+          return {
+            ...result,
+            finalUrl,
+            pageTitle: markdown?.title || content.title || result.title,
+            excerpt,
+            pageDate,
+            freshnessWarning,
+            browseError: undefined,
+            llms,
+            markdownUrl: markdown?.sourceUrl,
+            contentSource: markdown ? "markdown" : "html",
+            routedByLlms: route.routed,
+            routedFromUrl: route.routed ? route.requestUrl : undefined,
+            routedReason: route.reason,
+          } satisfies BrowsedSearchResult;
+        } finally {
+          await page.close().catch(() => {});
         }
-
-        const content = await extractContent(page);
-        const pageDate = await extractDate(page);
-        const finalUrl = page.url();
-        const freshnessWarning = pageDate ? checkDateFreshness(pageDate, maxAgeMonths).warning : result.freshnessWarning;
-        const excerpt = (markdown?.content || content.text).slice(0, excerptChars);
-
-        return {
-          ...result,
-          finalUrl,
-          pageTitle: markdown?.title || content.title || result.title,
-          excerpt,
-          pageDate,
-          freshnessWarning,
-          browseError: undefined,
-          llms,
-          markdownUrl: markdown?.sourceUrl,
-          contentSource: markdown ? "markdown" : "html",
-          routedByLlms: route.routed,
-          routedFromUrl: route.routed ? route.requestUrl : undefined,
-          routedReason: route.reason,
-        } satisfies BrowsedSearchResult;
       } catch (error) {
+        // A failed browser launch (e.g. missing Playwright binaries) must not
+        // kill the other results — keep this entry with the engine snippet.
         return {
           ...result,
           finalUrl: activeUrl,
           pageTitle: result.title,
-          excerpt: markdown?.content.slice(0, excerptChars) || "",
+          excerpt: markdown?.content.slice(0, excerptChars) || result.snippet || "",
           browseError: error instanceof Error ? error.message : "Unknown browse error",
           llms,
           markdownUrl: markdown?.sourceUrl,
@@ -286,8 +313,6 @@ export async function browseSearchResults(
           routedFromUrl: route.routed ? route.requestUrl : undefined,
           routedReason: route.reason,
         } satisfies BrowsedSearchResult;
-      } finally {
-        await page.close().catch(() => {});
       }
     }));
 

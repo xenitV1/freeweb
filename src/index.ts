@@ -6,7 +6,7 @@ import { browserManager } from "./browser.js";
 
 const server = new McpServer({
   name: "freeweb",
-  version: "3.4.0",
+  version: "3.4.1",
 });
 
 registerTools(server);

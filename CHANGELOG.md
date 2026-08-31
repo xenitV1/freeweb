@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepalivechangelog.com/en/1.0.0/).
 
+## [3.4.1] - 2026-08-31
+
+### Fixed
+
+**Missing Playwright browsers no longer crash tool calls**
+- `browserManager.launchEngine` left the rejected `launchPromise` in place after a failed launch, so every later call reused the same rejection (with the raw `browserType.launch: Executable doesn't exist ...` dump) until the server was restarted. Failed launches now clear the promise and put the engine in a 60s cooldown with an actionable message (`... Run: npx playwright install <engine>`); a cheap `existsSync(executablePath())` pre-check makes the first failure instant instead of a launch attempt.
+- `browseUrl`: when the browser path failed, the raw launch error propagated to the tool. It now degrades to whatever the static fetcher chain produced (even SPA/low-quality content) and only throws when there is nothing to fall back to.
+- `browseSearchResults`: `openPage` sat outside the per-result `try`, so one launch failure rejected the whole `Promise.all` and killed every result in `search_and_browse`. It is now per-result: failures keep the entry with the engine snippet as excerpt and a `browseError` note.
+- `selectEngine` now skips engines inside their unavailability cooldown, so rotation stops picking engines whose binaries are absent (e.g. firefox/webkit not installed).
+
+### Added
+
+- `friendlyLaunchError` / `pickAvailableEngines` exported from `src/browser.ts` and covered by `tests/unit/browser-availability.test.ts` (8 tests).
+
 ## [3.4.0] - 2026-07-23
 
 ### Added

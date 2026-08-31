@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   chromium,
   firefox,
@@ -14,6 +15,41 @@ interface EngineInstance {
   browser: Browser | null;
   launchPromise: Promise<Browser> | null;
   lastUsed: number;
+  unavailableUntil: number;
+  unavailableReason: string | null;
+}
+
+const MISSING_BINARY_PATTERN = /Executable doesn't exist|playwright install/i;
+
+/** Maps a raw Playwright launch error to an actionable message. */
+export function friendlyLaunchError(engine: EngineType, err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (MISSING_BINARY_PATTERN.test(message)) {
+    return `${engine} browser binaries are not installed. Run: npx playwright install ${engine}`;
+  }
+  return `Failed to launch ${engine} browser: ${message}`;
+}
+
+/** True when the engine's executable is known to be absent (cheap pre-check). */
+export function executableMissing(launcher: PwBrowserType): boolean {
+  try {
+    return !existsSync(launcher.executablePath());
+  } catch {
+    return false;
+  }
+}
+
+/** Filters out engines still inside their unavailability cooldown. */
+export function pickAvailableEngines(
+  enabled: EngineType[],
+  states: { unavailableUntil: number; unavailableReason: string | null }[],
+  now: number,
+): EngineType[] {
+  const available = enabled.filter((_, i) => {
+    const state = states[i];
+    return !state.unavailableReason || now >= state.unavailableUntil;
+  });
+  return available.length > 0 ? available : enabled;
 }
 
 const PROFILES: Record<
@@ -128,6 +164,9 @@ class BrowserManager {
 
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
+  /** How long an engine that failed to launch is skipped before retrying. */
+  private readonly UNAVAILABLE_COOLDOWN_MS = 60 * 1000;
+
   constructor() {
     const timer = setInterval(() => this.cleanupIdleEngines(), 60_000);
     timer.unref();
@@ -147,7 +186,13 @@ class BrowserManager {
   private getEngineInstance(type: EngineType): EngineInstance {
     let instance = this.engines.get(type);
     if (!instance) {
-      instance = { browser: null, launchPromise: null, lastUsed: 0 };
+      instance = {
+        browser: null,
+        launchPromise: null,
+        lastUsed: 0,
+        unavailableUntil: 0,
+        unavailableReason: null,
+      };
       this.engines.set(type, instance);
     }
     return instance;
@@ -158,13 +203,39 @@ class BrowserManager {
     if (instance.browser) return instance.browser;
     if (instance.launchPromise) return instance.launchPromise;
 
+    // Fast-fail while a recent launch failure is still cooling down, so a
+    // missing binary doesn't cost a launch attempt (and a raw error) per call.
+    if (
+      instance.unavailableReason &&
+      Date.now() < instance.unavailableUntil
+    ) {
+      throw new Error(instance.unavailableReason);
+    }
+    instance.unavailableReason = null;
+
     instance.launchPromise = (async () => {
       const launcher = LAUNCHERS[type];
       const profile = PROFILES[type];
-      const launched = await launcher.launch({
-        headless: true,
-        args: profile.launchArgs,
-      });
+      let launched: Browser;
+      try {
+        if (executableMissing(launcher)) {
+          throw new Error(
+            `${type} browser executable not found at ${launcher.executablePath()}. Run: npx playwright install ${type}`,
+          );
+        }
+        launched = await launcher.launch({
+          headless: true,
+          args: profile.launchArgs,
+        });
+      } catch (e) {
+        // Clear the rejected promise so later calls retry after the cooldown
+        // instead of reusing the rejection forever.
+        instance.launchPromise = null;
+        instance.unavailableUntil =
+          Date.now() + this.UNAVAILABLE_COOLDOWN_MS;
+        instance.unavailableReason = friendlyLaunchError(type, e);
+        throw new Error(instance.unavailableReason);
+      }
 
       launched.on("disconnected", () => {
         instance.browser = null;
@@ -191,16 +262,21 @@ class BrowserManager {
     const enabled = this.getEnabledEngines();
     if (enabled.length === 0) return "chromium";
     if (enabled.length === 1) return enabled[0];
-    const totalWeight = enabled.reduce(
+    const pool = pickAvailableEngines(
+      enabled,
+      enabled.map((e) => this.getEngineInstance(e)),
+      Date.now(),
+    );
+    const totalWeight = pool.reduce(
       (sum, e) => sum + this.ENGINE_WEIGHTS[e],
       0,
     );
     let random = Math.random() * totalWeight;
-    for (const engine of enabled) {
+    for (const engine of pool) {
       random -= this.ENGINE_WEIGHTS[engine];
       if (random <= 0) return engine;
     }
-    return enabled[enabled.length - 1];
+    return pool[pool.length - 1];
   }
 
   private getStealthScript(type: EngineType): string {
@@ -297,12 +373,14 @@ class BrowserManager {
     let browser: Browser;
     try {
       browser = await this.launchEngine(selectedEngine);
-    } catch {
+    } catch (e) {
       if (selectedEngine !== "chromium") {
         browser = await this.launchEngine("chromium");
         return this.createContextWithEngine(id, "chromium", browser);
       }
-      throw new Error(`Failed to launch ${selectedEngine} browser`);
+      throw e instanceof Error
+        ? e
+        : new Error(`Failed to launch ${selectedEngine} browser`);
     }
 
     return this.createContextWithEngine(id, selectedEngine, browser);
@@ -433,10 +511,16 @@ class BrowserManager {
     if (this.launchPromise) return this.launchPromise;
 
     this.launchPromise = (async () => {
-      const launched = await chromium.launch({
-        headless: true,
-        args: PROFILES.chromium.launchArgs,
-      });
+      let launched: Browser;
+      try {
+        launched = await chromium.launch({
+          headless: true,
+          args: PROFILES.chromium.launchArgs,
+        });
+      } catch (e) {
+        this.launchPromise = null;
+        throw new Error(friendlyLaunchError("chromium", e));
+      }
 
       launched.on("disconnected", () => {
         this.browser = null;
